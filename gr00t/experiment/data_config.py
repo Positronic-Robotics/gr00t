@@ -814,7 +814,7 @@ class EEAbsoluteDataConfig(BaseDataConfig):
                     "state.grip": "min_max",
                 },
                 target_rotations={
-                    "state.robot_position_quaternion": "quaternion",  # rotation_6d ???
+                    "state.robot_position_quaternion": "rotation_6d",  # quaternion vs rotation_6d ???
                 },
             ),
             # action transforms
@@ -824,7 +824,7 @@ class EEAbsoluteDataConfig(BaseDataConfig):
                 normalization_modes={
                     "action.target_grip": "binary",
                 },
-                target_rotations={"action.target_robot_position_quaternion": "quaternion"},  # axis_angle ???
+                target_rotations={"action.target_robot_position_quaternion": "quaternion"},  # quaternion vs axis_angle ???
             ),
             # concat transforms
             ConcatTransform(
