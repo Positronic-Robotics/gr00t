@@ -163,16 +163,24 @@ def main(args: ArgsConfig):
             denoising_steps=args.denoising_steps,
         )
 
+        def get_metadata():
+            return {
+                "model_path": args.model_path,
+                "embodiment_tag": args.embodiment_tag,
+                "denoising_steps": args.denoising_steps,
+                "data_config": args.data_config,
+            }
+
         # Start the server
         if args.http_server:
             from gr00t.eval.http_server import HTTPInferenceServer  # noqa: F401
 
-            server = HTTPInferenceServer(
-                policy, port=args.port, host=args.host, api_token=args.api_token
-            )
+            server = HTTPInferenceServer(policy, port=args.port, host=args.host, api_token=args.api_token)
+            server.app.get("/get_metadata")(get_metadata)
             server.run()
         else:
             server = RobotInferenceServer(policy, port=args.port, api_token=args.api_token)
+            server.register_endpoint("get_metadata", get_metadata, requires_input=False)
             server.run()
 
     # Here is mainly a testing code
