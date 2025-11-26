@@ -100,14 +100,8 @@ def import_external_data_config(data_config_str: str) -> Optional[BaseDataConfig
 
         module = importlib.import_module(module_path)
         if not hasattr(module, class_name):
-            available = [
-                n
-                for n in dir(module)
-                if not n.startswith("_") and isinstance(getattr(module, n), type)
-            ]
-            raise AttributeError(
-                f"Class '{class_name}' not found in '{module_path}'. Available: {available}"
-            )
+            available = [n for n in dir(module) if not n.startswith("_") and isinstance(getattr(module, n), type)]
+            raise AttributeError(f"Class '{class_name}' not found in '{module_path}'. Available: {available}")
 
         # assert if the class has 'transform' and 'modality_config' methods
         if not hasattr(getattr(module, class_name), "transform"):
@@ -772,6 +766,7 @@ class AgibotGenie1DataConfig(BaseDataConfig):
 
 ###########################################################################################
 
+
 class EEAbsoluteDataConfig(BaseDataConfig):
     video_keys = [
         "video.exterior_image_1",
@@ -791,7 +786,7 @@ class EEAbsoluteDataConfig(BaseDataConfig):
     observation_indices = [0]
     action_indices = list(range(16))
 
-    def transform(self):
+    def transforms(self):
         transforms = [
             # video transforms
             VideoToTensor(apply_to=self.video_keys),
@@ -824,7 +819,9 @@ class EEAbsoluteDataConfig(BaseDataConfig):
                 normalization_modes={
                     "action.target_grip": "binary",
                 },
-                target_rotations={"action.target_robot_position_quaternion": "quaternion"},  # quaternion vs axis_angle ???
+                target_rotations={
+                    "action.target_robot_position_quaternion": "quaternion"
+                },  # quaternion vs axis_angle ???
             ),
             # concat transforms
             ConcatTransform(
@@ -839,8 +836,26 @@ class EEAbsoluteDataConfig(BaseDataConfig):
                 max_action_dim=32,
             ),
         ]
+        return transforms
 
-        return ComposedModalityTransform(transforms=transforms)
+    def transform(self):
+        return ComposedModalityTransform(transforms=self.transforms())
+
+
+class EEAbsoluteDataConfigQ(EEAbsoluteDataConfig):
+    def transforms(self):
+        transforms = super().transforms()
+        assert isinstance(transforms[6], StateActionTransform)
+        transforms[6].target_rotations = {"state.robot_position_quaternion": "quaternion"}
+        return transforms
+
+
+class EEAbsoluteDataConfig6D(EEAbsoluteDataConfig):
+    def transforms(self):
+        transforms = super().transforms()
+        assert isinstance(transforms[8], StateActionTransform)
+        transforms[8].target_rotations = {"action.target_robot_position_quaternion": "rotation_6d"}
+        return transforms
 
 
 ###########################################################################################
@@ -859,4 +874,6 @@ DATA_CONFIG_MAP = {
     "oxe_droid": OxeDroidDataConfig(),
     "agibot_genie1": AgibotGenie1DataConfig(),
     "ee_absolute": EEAbsoluteDataConfig(),
+    "ee_absolute_q": EEAbsoluteDataConfigQ(),
+    "ee_absolute_6d": EEAbsoluteDataConfig6D(),
 }
