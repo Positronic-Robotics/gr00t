@@ -809,7 +809,7 @@ class EEAbsoluteDataConfig(BaseDataConfig):
                     "state.grip": "min_max",
                 },
                 target_rotations={
-                    "state.robot_position_quaternion": "rotation_6d",  # quaternion vs rotation_6d ???
+                    "state.robot_position_quaternion": "rotation_6d",
                 },
             ),
             # action transforms
@@ -819,9 +819,7 @@ class EEAbsoluteDataConfig(BaseDataConfig):
                 normalization_modes={
                     "action.target_grip": "binary",
                 },
-                target_rotations={
-                    "action.target_robot_position_quaternion": "quaternion"
-                },  # quaternion vs axis_angle ???
+                target_rotations={"action.target_robot_position_quaternion": "quaternion"},
             ),
             # concat transforms
             ConcatTransform(
@@ -850,14 +848,6 @@ class EEAbsoluteDataConfigQ(EEAbsoluteDataConfig):
         return transforms
 
 
-class EEAbsoluteDataConfig6D(EEAbsoluteDataConfig):
-    def transforms(self):
-        transforms = super().transforms()
-        assert isinstance(transforms[8], StateActionTransform)
-        transforms[8].target_rotations = {"action.target_robot_position_quaternion": "rotation_6d"}
-        return transforms
-
-
 ###########################################################################################
 
 DATA_CONFIG_MAP = {
@@ -875,5 +865,4 @@ DATA_CONFIG_MAP = {
     "agibot_genie1": AgibotGenie1DataConfig(),
     "ee_absolute": EEAbsoluteDataConfig(),
     "ee_absolute_q": EEAbsoluteDataConfigQ(),
-    "ee_absolute_6d": EEAbsoluteDataConfig6D(),
 }
