@@ -817,7 +817,8 @@ class EEAbsoluteDataConfig(BaseDataConfig):
             StateActionTransform(
                 apply_to=self.action_keys,
                 normalization_modes={
-                    "action.target_grip": "binary",
+                    "action.target_robot_position_translation": "min_max",
+                    "action.target_grip": "min_max",
                 },
                 target_rotations={"action.target_robot_position_quaternion": "quaternion"},
             ),
@@ -848,6 +849,79 @@ class EEAbsoluteDataConfigQ(EEAbsoluteDataConfig):
         return transforms
 
 
+class EEAbsJointsDataConfig(BaseDataConfig):
+    video_keys = [
+        "video.exterior_image_1",
+        "video.wrist_image",
+    ]
+    state_keys = [
+        "state.robot_position_translation",
+        "state.robot_position_quaternion",
+        "state.grip",
+        "state.joint_position",
+    ]
+    action_keys = [
+        "action.target_robot_position_translation",
+        "action.target_robot_position_quaternion",
+        "action.target_grip",
+    ]
+    language_keys = ["annotation.language.language_instruction"]
+    observation_indices = [0]
+    action_indices = list(range(16))
+
+    def transform(self):
+        transforms = [
+            # video transforms
+            VideoToTensor(apply_to=self.video_keys),
+            VideoCrop(apply_to=self.video_keys, scale=0.95),
+            VideoResize(apply_to=self.video_keys, height=224, width=224, interpolation="linear"),
+            VideoColorJitter(
+                apply_to=self.video_keys,
+                brightness=0.3,
+                contrast=0.4,
+                saturation=0.5,
+                hue=0.08,
+            ),
+            VideoToNumpy(apply_to=self.video_keys),
+            # state transforms
+            StateActionToTensor(apply_to=self.state_keys),
+            StateActionTransform(
+                apply_to=self.state_keys,
+                normalization_modes={
+                    "state.robot_position_translation": "min_max",
+                    "state.grip": "min_max",
+                    "state.joint_position": "min_max",
+                },
+                target_rotations={
+                    "state.robot_position_quaternion": "rotation_6d",
+                },
+            ),
+            # action transforms
+            StateActionToTensor(apply_to=self.action_keys),
+            StateActionTransform(
+                apply_to=self.action_keys,
+                normalization_modes={
+                    "action.target_robot_position_translation": "min_max",
+                    "action.target_grip": "min_max",
+                },
+                target_rotations={"action.target_robot_position_quaternion": "quaternion"},
+            ),
+            # concat transforms
+            ConcatTransform(
+                video_concat_order=self.video_keys,
+                state_concat_order=self.state_keys,
+                action_concat_order=self.action_keys,
+            ),
+            GR00TTransform(
+                state_horizon=len(self.observation_indices),
+                action_horizon=len(self.action_indices),
+                max_state_dim=64,
+                max_action_dim=32,
+            ),
+        ]
+        return ComposedModalityTransform(transforms=transforms)
+
+
 ###########################################################################################
 
 DATA_CONFIG_MAP = {
@@ -865,4 +939,5 @@ DATA_CONFIG_MAP = {
     "agibot_genie1": AgibotGenie1DataConfig(),
     "ee_absolute": EEAbsoluteDataConfig(),
     "ee_absolute_q": EEAbsoluteDataConfigQ(),
+    "ee_abs_joints": EEAbsJointsDataConfig(),
 }
