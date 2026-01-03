@@ -4,12 +4,19 @@
 Positronic embodiment configurations for GR00T N1.6.
 
 This module defines modality configurations for Positronic's end-effector
-control robots. The configs support absolute EE position control with
-optional joint position feedback.
+control robots. All configs use unified 'ee_pose' key for EE state/action.
+
+Variants:
+    - POSITRONIC_EE_CONFIG: 7D ee_pose (xyz+quat), absolute actions
+    - POSITRONIC_EE_JOINTS_CONFIG: 7D ee_pose + joints, absolute actions
+    - POSITRONIC_EE_ROT6D_CONFIG: 9D ee_pose (xyz+rot6d), absolute actions
+    - POSITRONIC_EE_ROT6D_REL_CONFIG: 9D ee_pose, relative actions
+    - POSITRONIC_EE_ROT6D_JOINTS_CONFIG: 9D ee_pose + joints, absolute actions
+    - POSITRONIC_EE_ROT6D_JOINTS_REL_CONFIG: 9D ee_pose + joints, relative actions
 
 Usage:
     python -m gr00t.experiment.launch_finetune \
-        --modality_config_path gr00t/configs/data/positronic_configs.py \
+        --modality_config_path gr00t/configs/data/positronic_ee_rot6d_rel.py \
         --embodiment_tag NEW_EMBODIMENT \
         ...
 """
@@ -23,24 +30,31 @@ from gr00t.data.types import (
 )
 
 
-def make_positronic_ee_config(include_joints: bool = False):
+def make_positronic_ee_config(
+    include_joints: bool = False,
+    use_rot6d: bool = False,
+    use_relative: bool = False,
+):
     """
     Create a Positronic EE control modality configuration.
 
     Args:
-        include_joints: If True, include joint_position in state modality
-                       for joint feedback during EE control.
+        include_joints: If True, include joint_position in state modality.
+        use_rot6d: If True, use 9D xyz+rot6d format. If False, use 7D xyz+quat.
+        use_relative: If True, use RELATIVE action representation (requires use_rot6d=True).
 
     Returns:
         Dictionary with video, state, action, and language ModalityConfig.
     """
-    state_keys = [
-        "robot_position_translation",  # 3 dims: x, y, z
-        "robot_position_quaternion",  # 4 dims: qw, qx, qy, qz
-        "grip",  # 1 dim: gripper state
-    ]
+    action_format = ActionFormat.XYZ_ROT6D if use_rot6d else ActionFormat.DEFAULT
+
+    # State keys: always use 'ee_pose' for unified interface
+    state_keys = ["ee_pose", "grip"]
     if include_joints:
-        state_keys.append("joint_position")  # 7 dims for 7-DOF arm
+        state_keys.append("joint_position")
+
+    # Action representation
+    ee_rep = ActionRepresentation.RELATIVE if use_relative else ActionRepresentation.ABSOLUTE
 
     return {
         "video": ModalityConfig(
@@ -52,26 +66,15 @@ def make_positronic_ee_config(include_joints: bool = False):
             modality_keys=state_keys,
         ),
         "action": ModalityConfig(
-            delta_indices=list(range(16)),  # 16-step action horizon
-            modality_keys=[
-                "target_robot_position_translation",  # 3 dims
-                "target_robot_position_quaternion",  # 4 dims
-                "target_grip",  # 1 dim
-            ],
+            delta_indices=list(range(16)),
+            modality_keys=["ee_pose", "grip"],
             action_configs=[
-                # Translation: absolute EE position
                 ActionConfig(
-                    rep=ActionRepresentation.ABSOLUTE,
-                    type=ActionType.EEF,
-                    format=ActionFormat.DEFAULT,
+                    rep=ee_rep,
+                    type=ActionType.EEF if use_rot6d else ActionType.NON_EEF,
+                    format=action_format,
+                    state_key="ee_pose",
                 ),
-                # Rotation: absolute quaternion
-                ActionConfig(
-                    rep=ActionRepresentation.ABSOLUTE,
-                    type=ActionType.EEF,
-                    format=ActionFormat.DEFAULT,
-                ),
-                # Gripper: absolute position
                 ActionConfig(
                     rep=ActionRepresentation.ABSOLUTE,
                     type=ActionType.NON_EEF,
@@ -86,6 +89,14 @@ def make_positronic_ee_config(include_joints: bool = False):
     }
 
 
-# Create the configurations (registration done by wrapper files)
-POSITRONIC_EE_CONFIG = make_positronic_ee_config(include_joints=False)
+# Standard 7D xyz+quat configs (absolute actions)
+POSITRONIC_EE_CONFIG = make_positronic_ee_config()
 POSITRONIC_EE_JOINTS_CONFIG = make_positronic_ee_config(include_joints=True)
+
+# 9D xyz+rot6d configs (supports both absolute and relative actions)
+POSITRONIC_EE_ROT6D_CONFIG = make_positronic_ee_config(use_rot6d=True)
+POSITRONIC_EE_ROT6D_REL_CONFIG = make_positronic_ee_config(use_rot6d=True, use_relative=True)
+POSITRONIC_EE_ROT6D_JOINTS_CONFIG = make_positronic_ee_config(include_joints=True, use_rot6d=True)
+POSITRONIC_EE_ROT6D_JOINTS_REL_CONFIG = make_positronic_ee_config(
+    include_joints=True, use_rot6d=True, use_relative=True
+)
