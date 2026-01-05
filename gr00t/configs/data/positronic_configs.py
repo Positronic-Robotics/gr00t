@@ -46,8 +46,22 @@ def make_positronic_ee_config(
     Returns:
         Dictionary with video, state, action, and language ModalityConfig.
     """
-    # For relative actions: NON_EEF + DEFAULT (element-wise math, raw array output)
-    # For absolute actions: format doesn't matter (no conversion happens), keep original
+    # IMPORTANT: ActionType and ActionFormat selection for relative actions
+    #
+    # For RELATIVE actions, we use NON_EEF + DEFAULT intentionally:
+    #   - Positronic computes relative actions in its own data pipeline using proper
+    #     SE(3) math (rotation composition, not element-wise subtraction)
+    #   - The pre-computed relative values are fed to GR00T as action data
+    #   - NON_EEF + DEFAULT ensures GR00T treats these as raw arrays without
+    #     applying additional SE(3) transformations
+    #
+    # DO NOT "fix" this to EEF + XYZ_ROT6D for relative actions:
+    #   - That would make GR00T interpret already-relative values as absolute EE poses
+    #   - GR00T would then apply its own relative conversion (double transformation)
+    #   - Result: incorrect rotation deltas and training failure
+    #
+    # For ABSOLUTE actions, format selection is less critical since no relative
+    # conversion happens, but we use XYZ_ROT6D for rot6d to match the data format.
     action_format = (
         ActionFormat.DEFAULT
         if use_relative
@@ -75,6 +89,8 @@ def make_positronic_ee_config(
             delta_indices=list(range(16)),
             modality_keys=["ee_pose", "grip"],
             action_configs=[
+                # NON_EEF: treat as raw array, don't apply EE-specific SE(3) transforms
+                # See comment above for why this is intentional for relative actions
                 ActionConfig(
                     rep=ee_rep,
                     type=ActionType.NON_EEF,
