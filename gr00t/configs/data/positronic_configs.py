@@ -46,7 +46,13 @@ def make_positronic_ee_config(
     Returns:
         Dictionary with video, state, action, and language ModalityConfig.
     """
-    action_format = ActionFormat.XYZ_ROT6D if use_rot6d else ActionFormat.DEFAULT
+    # For relative actions: NON_EEF + DEFAULT (element-wise math, raw array output)
+    # For absolute actions: format doesn't matter (no conversion happens), keep original
+    action_format = (
+        ActionFormat.DEFAULT
+        if use_relative
+        else (ActionFormat.XYZ_ROT6D if use_rot6d else ActionFormat.DEFAULT)
+    )
 
     # State keys: always use 'ee_pose' for unified interface
     state_keys = ["ee_pose", "grip"]
@@ -71,7 +77,7 @@ def make_positronic_ee_config(
             action_configs=[
                 ActionConfig(
                     rep=ee_rep,
-                    type=ActionType.EEF if use_rot6d else ActionType.NON_EEF,
+                    type=ActionType.NON_EEF,
                     format=action_format,
                     state_key="ee_pose",
                 ),
