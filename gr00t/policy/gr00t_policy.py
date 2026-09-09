@@ -23,6 +23,7 @@ This module provides the core policy classes for running Gr00t models:
 from pathlib import Path
 from typing import Any
 
+from huggingface_hub import snapshot_download
 import numpy as np
 import torch
 from transformers import AutoModel, AutoProcessor
@@ -103,7 +104,10 @@ class Gr00tPolicy(BasePolicy):
         super().__init__(strict=strict)
         if isinstance(embodiment_tag, str):
             embodiment_tag = EmbodimentTag.resolve(embodiment_tag)
-        model_dir = Path(model_path)
+        if str(model_path).startswith("hf://"):
+            model_dir = Path(snapshot_download(str(model_path).removeprefix("hf://")))
+        else:
+            model_dir = Path(model_path)
 
         # Load the pretrained model and move to target device with bfloat16 precision
         model = AutoModel.from_pretrained(model_dir)
@@ -251,6 +255,12 @@ class Gr00tPolicy(BasePolicy):
         bs = -1
 
         # ===== VIDEO VALIDATION =====
+        expected_cameras = set(self.modality_configs["video"].modality_keys)
+        if set(observation["video"]) - expected_cameras:
+            raise ValueError(
+                f"Checkpoint cameras {sorted(expected_cameras)} do not match "
+                f"observation cameras {sorted(observation['video'])}"
+            )
         # Validate each video stream defined in the modality config
         for video_key in self.modality_configs["video"].modality_keys:
             assert video_key in observation["video"], (

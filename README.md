@@ -255,7 +255,7 @@ See the [Orin setup guide](scripts/deployment/README.md#jetson-orin-setup) for D
 > per-platform Docker and bare-metal setup.
 
 
-For a containerized setup that avoids system-level dependency conflicts, see our [Docker Setup Guide](docker/README.md). The recommended container workflow is to start the image first, then clone or pull the repo inside the running container so your checkout uses the image's prebuilt dependency environment.
+For a containerized setup that avoids system-level dependency conflicts, see our [Docker Setup Guide](docker/README.md). The image includes this fork at `/gr00t` with its prebuilt dependency environment.
 
 ---
 

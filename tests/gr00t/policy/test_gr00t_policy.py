@@ -49,8 +49,8 @@ def _build_modality_configs():
     }
 
 
-@pytest.fixture
-def policy():
+@pytest.fixture(params=["/fake/path", "hf://owner/model"])
+def policy(request):
     mock_model = MagicMock()
     mock_model.eval = MagicMock()
     mock_model.to = MagicMock(return_value=mock_model)
@@ -96,6 +96,7 @@ def policy():
     with (
         patch("gr00t.policy.gr00t_policy.AutoModel") as MockAutoModel,
         patch("gr00t.policy.gr00t_policy.AutoProcessor") as MockAutoProcessor,
+        patch("gr00t.policy.gr00t_policy.snapshot_download", return_value="/fake/path") as download,
         patch("pathlib.Path.is_dir", return_value=False),
         patch("pathlib.Path.exists", return_value=True),
     ):
@@ -106,9 +107,14 @@ def policy():
 
         p = Gr00tPolicy(
             embodiment_tag=EMBODIMENT,
-            model_path="/fake/path",
+            model_path=request.param,
             device="cpu",
         )
+        if request.param.startswith("hf://"):
+            download.assert_called_once_with("owner/model")
+        else:
+            download.assert_not_called()
+        MockAutoModel.from_pretrained.assert_called_once_with(Path("/fake/path"))
     return p
 
 
@@ -139,6 +145,12 @@ class TestGr00tPolicyInit:
 
 
 class TestGr00tPolicyCheckObservation:
+    def test_extra_camera_cannot_be_silently_ignored(self, policy):
+        obs = _make_observation()
+        obs["video"]["second_external"] = obs["video"][VIDEO_KEYS[0]]
+        with pytest.raises(ValueError, match="Checkpoint cameras"):
+            policy.check_observation(obs)
+
     def test_valid_observation_passes(self, policy):
         obs = _make_observation()
         policy.check_observation(obs)

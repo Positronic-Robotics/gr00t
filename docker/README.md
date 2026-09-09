@@ -18,7 +18,21 @@ From the repository root:
 bash docker/build.sh
 ```
 
-This builds from `nvidia/cuda:12.8.0-devel-ubuntu24.04` and installs all dependencies into `/opt/gr00t-venv`. The image does not include a working source checkout; for normal use, start the image and then clone or pull the repo you want to run inside the container.
+This builds from `nvidia/cuda:12.8.0-devel-ubuntu24.04` and installs all dependencies into `/opt/gr00t-venv`. The image includes this fork at `/gr00t`, installed into `/opt/gr00t-venv`. Positronic launches that environment directly.
+
+## Positronic base image
+
+```bash
+make -C docker build
+make -C docker push IMAGE_TAG=my-branch
+```
+
+The Makefile publishes `positro/gr00t-base` with branch and commit tags. It does not replace
+`latest`. Positronic's `GROOT_BASE_IMAGE` selects this image for its adapter build.
+
+Fine-tuning defaults to the base checkpoint's saved model and modality configuration.
+`--video-keys` selects the fine-tuning camera layout; omitted, it retains the checkpoint's views.
+The policy server accepts `--model-path hf://nvidia/GR00T-N1.7-DROID` and downloads that snapshot.
 
 ## Running the Container
 
