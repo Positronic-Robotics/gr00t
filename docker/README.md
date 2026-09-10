@@ -34,7 +34,18 @@ The Makefile publishes `positro/gr00t-base` with branch and commit tags. It does
 `latest`. Positronic's `GROOT_BASE_IMAGE` selects this image for its adapter build.
 
 Fine-tuning defaults to the base checkpoint's saved model and modality configuration.
-`--video-keys` selects the fine-tuning camera layout; omitted, it retains the checkpoint's views.
+The Python launcher accepts `--video-keys` to select the fine-tuning camera layout; omitted, it retains the checkpoint's views.
+When using `examples/finetune.sh`, put this option after the script's `--` passthrough delimiter:
+
+```bash
+bash examples/finetune.sh \
+    --base-model-path nvidia/GR00T-N1.7-DROID \
+    --dataset-path /data/droid \
+    --embodiment-tag oxe_droid_relative_eef_relative_joint \
+    --output-dir /data/checkpoints \
+    -- --video-keys exterior_image_1_left exterior_image_2_left wrist_image_left
+```
+
 The policy server accepts `--model-path hf://nvidia/GR00T-N1.7-DROID` and downloads that snapshot.
 
 ## Running the Container
