@@ -49,8 +49,7 @@ def _build_modality_configs():
     }
 
 
-@pytest.fixture(params=["/fake/path", "hf://owner/model"])
-def policy(request):
+def _make_policy(model_path):
     mock_model = MagicMock()
     mock_model.eval = MagicMock()
     mock_model.to = MagicMock(return_value=mock_model)
@@ -107,15 +106,25 @@ def policy(request):
 
         p = Gr00tPolicy(
             embodiment_tag=EMBODIMENT,
-            model_path=request.param,
+            model_path=model_path,
             device="cpu",
         )
-        if request.param.startswith("hf://"):
+        if model_path.startswith("hf://"):
             download.assert_called_once_with("owner/model")
         else:
             download.assert_not_called()
         MockAutoModel.from_pretrained.assert_called_once_with(Path("/fake/path"))
     return p
+
+
+@pytest.fixture
+def policy():
+    return _make_policy("/fake/path")
+
+
+@pytest.mark.parametrize("model_path", ["/fake/path", "hf://owner/model"])
+def test_policy_resolves_local_and_hub_checkpoints(model_path):
+    _make_policy(model_path)
 
 
 def _make_observation(batch_size=1):

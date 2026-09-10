@@ -8,6 +8,7 @@ from pathlib import Path
 
 from gr00t.configs.finetune_config import FinetuneConfig
 from gr00t.data.types import ActionFormat, ActionRepresentation, ActionType
+from gr00t.experiment.experiment import warn_configs
 from gr00t.experiment.launch_finetune import build_config
 import pytest
 
@@ -56,6 +57,7 @@ def test_finetuning_retains_droid_checkpoint_contract(cameras):
     assert not config.model.tune_llm
     assert not config.model.tune_visual
     assert config.training.resume_from_checkpoint
+    warn_configs(config)
 
 
 def test_camera_override_does_not_change_a_subsequent_run():

@@ -105,6 +105,7 @@ def build_config(ft_config: FinetuneConfig):
     if ft_config.shortest_image_edge is not None:
         config.model.shortest_image_edge = ft_config.shortest_image_edge
         config.model.crop_fraction = ft_config.crop_fraction
+    if config.model.shortest_image_edge is not None and config.model.crop_fraction is not None:
         config.model.image_crop_size = None
         config.model.image_target_size = None
     if ft_config.extra_augmentation_config:
