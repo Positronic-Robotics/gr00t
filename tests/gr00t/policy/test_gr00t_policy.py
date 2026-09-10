@@ -213,6 +213,7 @@ class _NumpyLanguageSimPolicy:
                 modality_keys=["annotation.human.action.task_description"],
             ),
         }
+        self.language_key = self.modality_configs[LANGUAGE].modality_keys[0]
         self.last_observation = None
 
     def get_modality_config(self):
@@ -226,10 +227,12 @@ class _NumpyLanguageSimPolicy:
         return {}
 
 
-def test_sim_policy_wrapper_accepts_numpy_language_batches():
+@pytest.mark.parametrize("extra_language_keys", [[], ["training_paraphrase"]])
+def test_sim_policy_wrapper_accepts_numpy_language_batches(extra_language_keys):
     from gr00t.policy.gr00t_policy import Gr00tSimPolicyWrapper
 
     policy = _NumpyLanguageSimPolicy()
+    policy.modality_configs[LANGUAGE].modality_keys.extend(extra_language_keys)
     wrapper = Gr00tSimPolicyWrapper(policy)
     observation = {
         "video.camera": np.zeros((1, 1, 256, 256, 3), dtype=np.uint8),
@@ -240,5 +243,22 @@ def test_sim_policy_wrapper_accepts_numpy_language_batches():
     action, info = wrapper.get_action(observation)
 
     assert policy.last_observation[LANGUAGE][LANGUAGE_KEY] == [["follow the instruction"]]
+    assert list(policy.last_observation[LANGUAGE]) == [policy.language_key]
     assert "action.action" in action
     assert info == {}
+
+
+def test_sim_policy_wrapper_requires_selected_language_key():
+    from gr00t.policy.gr00t_policy import Gr00tSimPolicyWrapper
+
+    policy = _NumpyLanguageSimPolicy()
+    policy.modality_configs[LANGUAGE].modality_keys.append("training_paraphrase")
+    wrapper = Gr00tSimPolicyWrapper(policy)
+    observation = {
+        "video.camera": np.zeros((1, 1, 256, 256, 3), dtype=np.uint8),
+        "state.state": np.zeros((1, 1, 3), dtype=np.float32),
+        "training_paraphrase": ["follow the instruction"],
+    }
+    with pytest.raises(AssertionError, match="Language key .* must be in observation"):
+        wrapper.get_action(observation)
+    assert policy.last_observation is None

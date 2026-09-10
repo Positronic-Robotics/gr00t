@@ -30,7 +30,16 @@ from transformers import AutoModel, AutoProcessor
 
 from gr00t.data.embodiment_tags import FINETUNE_ONLY_TAGS, POSTTRAIN_TAGS, EmbodimentTag
 from gr00t.data.interfaces import BaseProcessor
-from gr00t.data.types import LANGUAGE, MessageType, ModalityConfig, VLAStepData
+from gr00t.data.types import (
+    COARSE_ACTION_LANGUAGE_KEY,
+    LANGUAGE,
+    STATE,
+    TASK_LANGUAGE_KEY,
+    VIDEO,
+    MessageType,
+    ModalityConfig,
+    VLAStepData,
+)
 
 from .policy import BasePolicy, PolicyWrapper
 
@@ -189,13 +198,13 @@ class Gr00tPolicy(BasePolicy):
         """
         unbatched_obs = []
         # Infer batch size from the first video key
-        batch_size = value["video"][list(value["video"].keys())[0]].shape[0]
+        batch_size = value[VIDEO][list(value[VIDEO].keys())[0]].shape[0]
 
         # Split each modality along the batch dimension
         for i in range(batch_size):
             unbatched_value = {
-                "video": {k: v[i] for k, v in value["video"].items()},
-                "state": {k: v[i] for k, v in value["state"].items()},
+                VIDEO: {k: v[i] for k, v in value[VIDEO].items()},
+                STATE: {k: v[i] for k, v in value[STATE].items()},
                 LANGUAGE: {k: v[i] for k, v in value[LANGUAGE].items()},
             }
             unbatched_obs.append(unbatched_value)
@@ -211,8 +220,8 @@ class Gr00tPolicy(BasePolicy):
             VLAStepData object ready for processor input
         """
         return VLAStepData(
-            images=observation["video"],
-            states=observation["state"],
+            images=observation[VIDEO],
+            states=observation[STATE],
             actions={},  # No ground truth actions during inference
             text=observation[LANGUAGE][self.language_key][0],
             embodiment=self.embodiment_tag,
@@ -245,7 +254,7 @@ class Gr00tPolicy(BasePolicy):
             AssertionError: If any validation check fails
         """
         # Check that observation contains all required top-level modality keys
-        for modality in ["video", "state", LANGUAGE]:
+        for modality in [VIDEO, STATE, LANGUAGE]:
             assert modality in observation, f"Observation must contain a '{modality}' key"
             assert isinstance(observation[modality], dict), (
                 f"Observation '{modality}' must be a dictionary. Got {type(observation[modality])}: {observation[modality]}"
@@ -255,27 +264,27 @@ class Gr00tPolicy(BasePolicy):
         bs = -1
 
         # ===== VIDEO VALIDATION =====
-        expected_cameras = set(self.modality_configs["video"].modality_keys)
-        if set(observation["video"]) - expected_cameras:
+        expected_cameras = set(self.modality_configs[VIDEO].modality_keys)
+        if set(observation[VIDEO]) - expected_cameras:
             raise ValueError(
                 f"Checkpoint cameras {sorted(expected_cameras)} do not match "
-                f"observation cameras {sorted(observation['video'])}"
+                f"observation cameras {sorted(observation[VIDEO])}"
             )
         # Validate each video stream defined in the modality config
-        for video_key in self.modality_configs["video"].modality_keys:
-            assert video_key in observation["video"], (
+        for video_key in self.modality_configs[VIDEO].modality_keys:
+            assert video_key in observation[VIDEO], (
                 f"Video key '{video_key}' must be in observation"
             )
 
             # Set or verify batch size consistency across all video keys
             if bs == -1:
-                bs = len(observation["video"][video_key])
+                bs = len(observation[VIDEO][video_key])
             else:
-                assert len(observation["video"][video_key]) == bs, (
-                    f"Video key '{video_key}' must have batch size {bs}. Got {len(observation['video'][video_key])}"
+                assert len(observation[VIDEO][video_key]) == bs, (
+                    f"Video key '{video_key}' must have batch size {bs}. Got {len(observation[VIDEO][video_key])}"
                 )
 
-            batched_video = observation["video"][video_key]
+            batched_video = observation[VIDEO][video_key]
 
             # Verify data type is numpy array
             assert isinstance(batched_video, np.ndarray), (
@@ -293,8 +302,8 @@ class Gr00tPolicy(BasePolicy):
             )
 
             # Verify temporal dimension matches the expected horizon from config
-            assert batched_video.shape[1] == len(self.modality_configs["video"].delta_indices), (
-                f"Video key '{video_key}'s horizon must be {len(self.modality_configs['video'].delta_indices)}. Got {batched_video.shape[1]}"
+            assert batched_video.shape[1] == len(self.modality_configs[VIDEO].delta_indices), (
+                f"Video key '{video_key}'s horizon must be {len(self.modality_configs[VIDEO].delta_indices)}. Got {batched_video.shape[1]}"
             )
 
             # Verify channel dimension is 3 (RGB images)
@@ -304,22 +313,22 @@ class Gr00tPolicy(BasePolicy):
 
         # ===== STATE VALIDATION =====
         # Validate each state stream defined in the modality config
-        for state_key in self.modality_configs["state"].modality_keys:
+        for state_key in self.modality_configs[STATE].modality_keys:
             # Check that the expected state key exists in the observation
             # (must happen before indexing — see video validation above)
-            assert state_key in observation["state"], (
+            assert state_key in observation[STATE], (
                 f"State key '{state_key}' must be in observation"
             )
 
             # Set or verify batch size consistency across all state keys
             if bs == -1:
-                bs = len(observation["state"][state_key])
+                bs = len(observation[STATE][state_key])
             else:
-                assert len(observation["state"][state_key]) == bs, (
-                    f"State key '{state_key}' must have batch size {bs}. Got {len(observation['state'][state_key])}"
+                assert len(observation[STATE][state_key]) == bs, (
+                    f"State key '{state_key}' must have batch size {bs}. Got {len(observation[STATE][state_key])}"
                 )
 
-            batched_state = observation["state"][state_key]
+            batched_state = observation[STATE][state_key]
 
             # Verify data type is numpy array
             assert isinstance(batched_state, np.ndarray), (
@@ -337,8 +346,8 @@ class Gr00tPolicy(BasePolicy):
             )
 
             # Verify temporal dimension matches the expected horizon from config
-            assert batched_state.shape[1] == len(self.modality_configs["state"].delta_indices), (
-                f"State key '{state_key}'s horizon must be {len(self.modality_configs['state'].delta_indices)}. Got {batched_state.shape[1]}"
+            assert batched_state.shape[1] == len(self.modality_configs[STATE].delta_indices), (
+                f"State key '{state_key}'s horizon must be {len(self.modality_configs[STATE].delta_indices)}. Got {batched_state.shape[1]}"
             )
 
         language_key = self.language_key
@@ -409,7 +418,7 @@ class Gr00tPolicy(BasePolicy):
 
         # Step 5: Decode actions from normalized space back to physical units
         batched_states = {}
-        for k in self.modality_configs["state"].modality_keys:
+        for k in self.modality_configs[STATE].modality_keys:
             batched_states[k] = np.stack([s[k] for s in states], axis=0)  # (B, T, D)
         unnormalized_action = self.processor.decode_action(
             normalized_action.cpu().numpy(), self.embodiment_tag, batched_states
@@ -494,8 +503,8 @@ class Gr00tSimPolicyWrapper(PolicyWrapper):
     This wrapper is only needed for compatibility with the existing Gr00t sim infrastructure.
 
     Key transformations performed by this wrapper:
-    - Observation keys: 'video.cam' -> observation['video']['cam']
-    - Observation keys: 'state.joints' -> observation['state']['joints']
+    - Observation keys: 'video.cam' -> observation[VIDEO]['cam']
+    - Observation keys: 'state.joints' -> observation[STATE]['joints']
     - Language keys: 'task' or 'annotation.human.coarse_action' -> observation[LANGUAGE]['task']
     - Action keys: action['joints'] -> 'action.joints'
     """
@@ -512,6 +521,13 @@ class Gr00tSimPolicyWrapper(PolicyWrapper):
         assert len(self.policy.modality_configs[LANGUAGE].delta_indices) == 1, (
             "Only one language delta index is supported"
         )
+
+    def _language_observation_key(self, observation: dict[str, Any]) -> str:
+        key = self.policy.language_key
+        # DC environments expose their instruction under this annotation key.
+        if key == TASK_LANGUAGE_KEY and COARSE_ACTION_LANGUAGE_KEY in observation:
+            return COARSE_ACTION_LANGUAGE_KEY
+        return key
 
     def check_observation(self, observation: dict[str, Any]) -> None:
         """Validate observation from Gr00t sim environment format.
@@ -535,7 +551,7 @@ class Gr00tSimPolicyWrapper(PolicyWrapper):
 
         # ===== VIDEO VALIDATION =====
         # Check video modalities with flat key format: 'video.camera_name'
-        for video_key in modality_configs["video"].modality_keys:
+        for video_key in modality_configs[VIDEO].modality_keys:
             # Construct flat key expected in Gr00t sim environment
             parsed_key = f"video.{video_key}"
             assert parsed_key in observation, f"Video key '{parsed_key}' must be in observation"
@@ -558,8 +574,8 @@ class Gr00tSimPolicyWrapper(PolicyWrapper):
             )
 
             # Verify temporal dimension matches the expected horizon from config
-            assert batched_video.shape[1] == len(modality_configs["video"].delta_indices), (
-                f"Video key '{video_key}'s horizon must be {len(modality_configs['video'].delta_indices)}. Got {batched_video.shape[1]}"
+            assert batched_video.shape[1] == len(modality_configs[VIDEO].delta_indices), (
+                f"Video key '{video_key}'s horizon must be {len(modality_configs[VIDEO].delta_indices)}. Got {batched_video.shape[1]}"
             )
 
             # Verify channel dimension is 3 (RGB images)
@@ -569,7 +585,7 @@ class Gr00tSimPolicyWrapper(PolicyWrapper):
 
         # ===== STATE VALIDATION =====
         # Check state modalities with flat key format: 'state.state_name'
-        for state_key in modality_configs["state"].modality_keys:
+        for state_key in modality_configs[STATE].modality_keys:
             # Construct flat key expected in Gr00t sim environment
             parsed_key = f"state.{state_key}"
             assert parsed_key in observation, f"State key '{parsed_key}' must be in observation"
@@ -592,38 +608,20 @@ class Gr00tSimPolicyWrapper(PolicyWrapper):
             )
 
             # Verify temporal dimension matches the expected horizon from config
-            assert batched_state.shape[1] == len(modality_configs["state"].delta_indices), (
-                f"State key '{state_key}'s horizon must be {len(modality_configs['state'].delta_indices)}. Got {batched_state.shape[1]}"
+            assert batched_state.shape[1] == len(modality_configs[STATE].delta_indices), (
+                f"State key '{state_key}'s horizon must be {len(modality_configs[STATE].delta_indices)}. Got {batched_state.shape[1]}"
             )
 
-        # ===== LANGUAGE VALIDATION =====
-        # Check language modalities (special handling for DC environment compatibility)
-        for language_key in modality_configs[LANGUAGE].modality_keys:
-            # PATCH: Legacy compatibility for DC environments
-            # DC envs use 'annotation.human.coarse_action' instead of 'task'
-            if language_key == "task" and "annotation.human.coarse_action" in observation:
-                language_key = "annotation.human.coarse_action"
-            # /PATCH
-
-            # Check that the expected language key exists
-            assert language_key in observation, (
-                f"Language key '{language_key}' must be in observation"
-            )
-
-            # In Gr00t sim format, language is a tuple of strings (B,)
-            batched_language = _sim_language_batch_to_sequence(observation[language_key])
-
-            # Verify outer structure is a tuple (batch dimension)
-            assert isinstance(batched_language, (tuple, list)), (
-                f"Language key '{language_key}' must be a tuple, list, or numpy array. "
-                f"Got {type(observation[language_key])}"
-            )
-            assert batched_language, f"Language key '{language_key}' must not be empty"
-
-            # Verify each batch item is a string
-            assert isinstance(batched_language[0], str), (
-                f"Language batch item must be a string. Got {type(batched_language[0])}"
-            )
+        language_key = self._language_observation_key(observation)
+        assert language_key in observation, f"Language key '{language_key}' must be in observation"
+        batched_language = _sim_language_batch_to_sequence(observation[language_key])
+        assert isinstance(batched_language, (tuple, list)), (
+            f"Language key '{language_key}' must be a tuple, list, or numpy array. "
+            f"Got {type(observation[language_key])}"
+        )
+        assert batched_language, f"Language key '{language_key}' must not be empty"
+        for item in batched_language:
+            assert isinstance(item, str), f"Language batch item must be a string. Got {type(item)}"
 
     def _get_action(
         self, observation: dict[str, Any], options: dict[str, Any] | None = None
@@ -648,33 +646,17 @@ class Gr00tSimPolicyWrapper(PolicyWrapper):
         Returns:
             Tuple of (flat_actions_dict, info_dict)
         """
-        # Transform flat observation format to nested format expected by Gr00tPolicy
-        new_obs = {}
-        for modality in ["video", "state", LANGUAGE]:
-            new_obs[modality] = {}
-            for key in self.policy.modality_configs[modality].modality_keys:
-                if modality == LANGUAGE:
-                    # PATCH: Legacy compatibility for DC environments
-                    if key == "task" and "annotation.human.coarse_action" in observation:
-                        parsed_key = "annotation.human.coarse_action"
-                    # /PATCH
-                    else:
-                        parsed_key = key
-                else:
-                    # Construct flat key (e.g., 'video.camera' or 'state.joints')
-                    parsed_key = f"{modality}.{key}"
-
-                arr = observation[parsed_key]
-
-                # Transform to nested format
-                if modality == LANGUAGE:
-                    arr = _sim_language_batch_to_sequence(arr)
-                    # Convert from tuple[str] or list[str] (B,) to list[list[str]] (B, 1)
-                    # Each element becomes a list with one string for temporal dimension
-                    new_obs[modality][key] = [[str(item)] for item in arr]
-                else:
-                    # Video and state arrays are already in correct format (B, T, ...)
-                    new_obs[modality][key] = arr
+        new_obs = {
+            modality: {
+                key: observation[f"{modality}.{key}"]
+                for key in self.policy.modality_configs[modality].modality_keys
+            }
+            for modality in (VIDEO, STATE)
+        }
+        language = _sim_language_batch_to_sequence(
+            observation[self._language_observation_key(observation)]
+        )
+        new_obs[LANGUAGE] = {self.policy.language_key: [[str(item)] for item in language]}
 
         # Compute actions using the underlying Gr00tPolicy
         action, info = self.policy.get_action(new_obs, options)

@@ -22,7 +22,11 @@ import numpy as np
 from gr00t.data.embodiment_tags import EmbodimentTag
 
 
+VIDEO = "video"
+STATE = "state"
 LANGUAGE = "language"
+TASK_LANGUAGE_KEY = "task"
+COARSE_ACTION_LANGUAGE_KEY = "annotation.human.coarse_action"
 
 
 class MessageType(Enum):
