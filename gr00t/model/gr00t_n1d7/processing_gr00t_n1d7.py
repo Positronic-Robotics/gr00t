@@ -36,6 +36,7 @@ from gr00t.configs.data.embodiment_configs import ModalityConfig
 from gr00t.data.embodiment_tags import EmbodimentTag
 from gr00t.data.interfaces import BaseProcessor
 from gr00t.data.state_action.state_action_processor import StateActionProcessor
+from gr00t.data.types import LANGUAGE
 from gr00t.data.utils import parse_modality_configs, to_json_serializable
 
 from .image_augmentations import (
@@ -507,7 +508,7 @@ class Gr00tN1d7Processor(BaseProcessor):
             images_perm = images.permute(0, 1, 2, 5, 3, 4).reshape(B, T * V, img_C, img_H, img_W)
             transformed_images = self.eval_image_transform(images_perm).numpy()
 
-        language_key = modality_config["language"].modality_keys[0]
+        language_key = modality_config[LANGUAGE].modality_keys[0]
         language = [
             re.sub(r"[^\w\s]", "", lang.lower()) if self.formalize_language else lang
             for lang in observation[language_key]
@@ -872,6 +873,8 @@ class Gr00tN1d7Processor(BaseProcessor):
                 "exclude_state",
                 "state_dropout_prob",
                 "use_mean_std",
+                "use_percentiles",
+                "extra_augmentation_config",
                 "model_name",
                 "model_type",
                 "max_action_horizon",

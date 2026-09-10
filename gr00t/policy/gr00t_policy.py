@@ -30,7 +30,7 @@ from transformers import AutoModel, AutoProcessor
 
 from gr00t.data.embodiment_tags import FINETUNE_ONLY_TAGS, POSTTRAIN_TAGS, EmbodimentTag
 from gr00t.data.interfaces import BaseProcessor
-from gr00t.data.types import MessageType, ModalityConfig, VLAStepData
+from gr00t.data.types import LANGUAGE, MessageType, ModalityConfig, VLAStepData
 
 from .policy import BasePolicy, PolicyWrapper
 
@@ -172,8 +172,8 @@ class Gr00tPolicy(BasePolicy):
         # Extract and validate language configuration
         # Some embodiments (e.g. OXE_DROID) define multiple language keys for
         # training-time augmentation (paraphrases). At inference we only use the first key.
-        language_keys = self.modality_configs["language"].modality_keys
-        language_delta_indices = self.modality_configs["language"].delta_indices
+        language_keys = self.modality_configs[LANGUAGE].modality_keys
+        language_delta_indices = self.modality_configs[LANGUAGE].delta_indices
         assert len(language_keys) >= 1, "At least one language key is required"
         assert len(language_delta_indices) == 1, "Only one language delta index is supported"
         self.language_key = language_keys[0]
@@ -196,7 +196,7 @@ class Gr00tPolicy(BasePolicy):
             unbatched_value = {
                 "video": {k: v[i] for k, v in value["video"].items()},
                 "state": {k: v[i] for k, v in value["state"].items()},
-                "language": {k: v[i] for k, v in value["language"].items()},
+                LANGUAGE: {k: v[i] for k, v in value[LANGUAGE].items()},
             }
             unbatched_obs.append(unbatched_value)
         return unbatched_obs
@@ -214,7 +214,7 @@ class Gr00tPolicy(BasePolicy):
             images=observation["video"],
             states=observation["state"],
             actions={},  # No ground truth actions during inference
-            text=observation["language"][self.language_key][0],
+            text=observation[LANGUAGE][self.language_key][0],
             embodiment=self.embodiment_tag,
         )
 
@@ -245,7 +245,7 @@ class Gr00tPolicy(BasePolicy):
             AssertionError: If any validation check fails
         """
         # Check that observation contains all required top-level modality keys
-        for modality in ["video", "state", "language"]:
+        for modality in ["video", "state", LANGUAGE]:
             assert modality in observation, f"Observation must contain a '{modality}' key"
             assert isinstance(observation[modality], dict), (
                 f"Observation '{modality}' must be a dictionary. Got {type(observation[modality])}: {observation[modality]}"
@@ -341,51 +341,31 @@ class Gr00tPolicy(BasePolicy):
                 f"State key '{state_key}'s horizon must be {len(self.modality_configs['state'].delta_indices)}. Got {batched_state.shape[1]}"
             )
 
-        # ===== LANGUAGE VALIDATION =====
-        # Validate each language stream defined in the modality config
-        for language_key in self.modality_configs["language"].modality_keys:
-            # Check that the expected language key exists in the observation
-            # (must happen before indexing — see video validation above)
-            assert language_key in observation["language"], (
-                f"Language key '{language_key}' must be in observation"
+        language_key = self.language_key
+        assert language_key in observation[LANGUAGE], (
+            f"Language key '{language_key}' must be in observation"
+        )
+        batched_language = observation[LANGUAGE][language_key]
+        assert isinstance(batched_language, list), (
+            f"Language key '{language_key}' must be a list. Got {type(batched_language)}"
+        )
+        if bs != -1:
+            assert len(batched_language) == bs, (
+                f"Language key '{language_key}' must have batch size {bs}. Got {len(batched_language)}"
             )
-
-            # Set or verify batch size consistency (language uses len instead of .shape)
-            if bs == -1:
-                bs = len(observation["language"][language_key])
-            else:
-                assert len(observation["language"][language_key]) == bs, (
-                    f"Language key '{language_key}' must have batch size {bs}. Got {len(observation['language'][language_key])}"
-                )
-
-            batched_language: list[list[str]] = observation["language"][language_key]
-
-            # Verify outer structure is a list (batch dimension)
-            assert isinstance(batched_language, list), (
-                f"Language key '{language_key}' must be a list. Got {type(batched_language)}"
+        for batch_item in batched_language:
+            assert isinstance(batch_item, list), (
+                f"Language batch item must be a list. Got {type(batch_item)}"
             )
-
-            # Validate each batch item
-            for batch_item in batched_language:
-                # Verify temporal dimension matches expected horizon
-                assert len(batch_item) == len(self.modality_configs["language"].delta_indices), (
-                    f"Language key '{language_key}'s horizon must be {len(self.modality_configs['language'].delta_indices)}. Got {len(batched_language)}"
-                )
-
-                # Verify inner structure is also a list (temporal dimension)
-                assert isinstance(batch_item, list), (
-                    f"Language batch item must be a list. Got {type(batch_item)}"
-                )
-
-                # Current implementation expects exactly one language instruction per timestep
-                assert len(batch_item) == 1, (
-                    f"Language batch item must have exactly one item. Got {len(batch_item)}"
-                )
-
-                # Verify the instruction itself is a string
-                assert isinstance(batch_item[0], str), (
-                    f"Language batch item must be a string. Got {type(batch_item[0])}"
-                )
+            assert len(batch_item) == len(self.modality_configs[LANGUAGE].delta_indices), (
+                f"Language key '{language_key}'s horizon must be {len(self.modality_configs[LANGUAGE].delta_indices)}. Got {len(batch_item)}"
+            )
+            assert len(batch_item) == 1, (
+                f"Language batch item must have exactly one item. Got {len(batch_item)}"
+            )
+            assert isinstance(batch_item[0], str), (
+                f"Language batch item must be a string. Got {type(batch_item[0])}"
+            )
 
     def _get_action(
         self, observation: dict[str, Any], options: dict[str, Any] | None = None
@@ -516,7 +496,7 @@ class Gr00tSimPolicyWrapper(PolicyWrapper):
     Key transformations performed by this wrapper:
     - Observation keys: 'video.cam' -> observation['video']['cam']
     - Observation keys: 'state.joints' -> observation['state']['joints']
-    - Language keys: 'task' or 'annotation.human.coarse_action' -> observation['language']['task']
+    - Language keys: 'task' or 'annotation.human.coarse_action' -> observation[LANGUAGE]['task']
     - Action keys: action['joints'] -> 'action.joints'
     """
 
@@ -529,7 +509,7 @@ class Gr00tSimPolicyWrapper(PolicyWrapper):
         """
         super().__init__(policy, strict=strict)
         self.policy: Gr00tPolicy = policy
-        assert len(self.policy.modality_configs["language"].delta_indices) == 1, (
+        assert len(self.policy.modality_configs[LANGUAGE].delta_indices) == 1, (
             "Only one language delta index is supported"
         )
 
@@ -618,7 +598,7 @@ class Gr00tSimPolicyWrapper(PolicyWrapper):
 
         # ===== LANGUAGE VALIDATION =====
         # Check language modalities (special handling for DC environment compatibility)
-        for language_key in modality_configs["language"].modality_keys:
+        for language_key in modality_configs[LANGUAGE].modality_keys:
             # PATCH: Legacy compatibility for DC environments
             # DC envs use 'annotation.human.coarse_action' instead of 'task'
             if language_key == "task" and "annotation.human.coarse_action" in observation:
@@ -670,10 +650,10 @@ class Gr00tSimPolicyWrapper(PolicyWrapper):
         """
         # Transform flat observation format to nested format expected by Gr00tPolicy
         new_obs = {}
-        for modality in ["video", "state", "language"]:
+        for modality in ["video", "state", LANGUAGE]:
             new_obs[modality] = {}
             for key in self.policy.modality_configs[modality].modality_keys:
-                if modality == "language":
+                if modality == LANGUAGE:
                     # PATCH: Legacy compatibility for DC environments
                     if key == "task" and "annotation.human.coarse_action" in observation:
                         parsed_key = "annotation.human.coarse_action"
@@ -687,7 +667,7 @@ class Gr00tSimPolicyWrapper(PolicyWrapper):
                 arr = observation[parsed_key]
 
                 # Transform to nested format
-                if modality == "language":
+                if modality == LANGUAGE:
                     arr = _sim_language_batch_to_sequence(arr)
                     # Convert from tuple[str] or list[str] (B,) to list[list[str]] (B, 1)
                     # Each element becomes a list with one string for temporal dimension

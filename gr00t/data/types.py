@@ -22,6 +22,9 @@ import numpy as np
 from gr00t.data.embodiment_tags import EmbodimentTag
 
 
+LANGUAGE = "language"
+
+
 class MessageType(Enum):
     START_OF_EPISODE = "start_of_episode"
     END_OF_EPISODE = "end_of_episode"

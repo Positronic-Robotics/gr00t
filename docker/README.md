@@ -20,6 +20,9 @@ make -C docker build
 
 This builds from `nvidia/cuda:12.8.0-devel-ubuntu24.04` and installs all dependencies into `/opt/gr00t-venv`. The image includes this fork at `/gr00t`, installed into `/opt/gr00t-venv`. Positronic launches that environment directly.
 
+Docker builds for the host architecture. To cross-build, use Docker's standard setting,
+for example `DOCKER_DEFAULT_PLATFORM=linux/amd64 make -C docker build`.
+
 ## Positronic base image
 
 ```bash

@@ -22,7 +22,7 @@ Uses mocked model and processor to avoid downloading checkpoints.
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from gr00t.data.types import ModalityConfig
+from gr00t.data.types import LANGUAGE, ModalityConfig
 import numpy as np
 import pytest
 import torch
@@ -44,7 +44,7 @@ def _build_modality_configs():
             "video": ModalityConfig(delta_indices=[0], modality_keys=VIDEO_KEYS),
             "state": ModalityConfig(delta_indices=[0], modality_keys=STATE_KEYS),
             "action": ModalityConfig(delta_indices=list(range(16)), modality_keys=ACTION_KEYS),
-            "language": ModalityConfig(delta_indices=[0], modality_keys=[LANGUAGE_KEY]),
+            LANGUAGE: ModalityConfig(delta_indices=[0], modality_keys=[LANGUAGE_KEY]),
         }
     }
 
@@ -138,7 +138,7 @@ def _make_observation(batch_size=1):
             for k in STATE_KEYS[:-1]  # all except gripper
         }
         | {"gripper": np.random.randn(batch_size, 1, 2).astype(np.float32)},
-        "language": {
+        LANGUAGE: {
             LANGUAGE_KEY: [["pick up the apple"]] * batch_size,
         },
     }
@@ -154,6 +154,14 @@ class TestGr00tPolicyInit:
 
 
 class TestGr00tPolicyCheckObservation:
+    def test_inference_requires_only_the_selected_language_key(self, policy):
+        policy.modality_configs[LANGUAGE].modality_keys.append("training_paraphrase")
+        observation = _make_observation()
+        policy.get_action(observation)
+        del observation[LANGUAGE][LANGUAGE_KEY]
+        with pytest.raises(AssertionError, match="Language key"):
+            policy.check_observation(observation)
+
     def test_extra_camera_cannot_be_silently_ignored(self, policy):
         obs = _make_observation()
         obs["video"]["second_external"] = obs["video"][VIDEO_KEYS[0]]
@@ -200,7 +208,7 @@ class _NumpyLanguageSimPolicy:
                 modality_keys=["state"],
             ),
             "action": ModalityConfig(delta_indices=[0], modality_keys=["action"]),
-            "language": ModalityConfig(
+            LANGUAGE: ModalityConfig(
                 delta_indices=[0],
                 modality_keys=["annotation.human.action.task_description"],
             ),
@@ -231,6 +239,6 @@ def test_sim_policy_wrapper_accepts_numpy_language_batches():
 
     action, info = wrapper.get_action(observation)
 
-    assert policy.last_observation["language"][LANGUAGE_KEY] == [["follow the instruction"]]
+    assert policy.last_observation[LANGUAGE][LANGUAGE_KEY] == [["follow the instruction"]]
     assert "action.action" in action
     assert info == {}

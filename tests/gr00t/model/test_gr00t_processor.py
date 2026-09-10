@@ -22,6 +22,7 @@ processor (no model download needed).
 
 import json
 from pathlib import Path
+import shutil
 import tempfile
 from unittest.mock import MagicMock, patch
 
@@ -103,6 +104,27 @@ def test_from_pretrained_passes_hub_kwargs_to_cached_file(tmp_path):
             "revision": "abc123",
             "token": "hf_fake",
         }
+
+
+@pytest.mark.parametrize("use_percentiles", [True, False])
+def test_checkpoint_overrides_reach_normalization_and_mask_transforms(tmp_path, use_percentiles):
+    from gr00t.model.gr00t_n1d7 import processing_gr00t_n1d7 as processor_module
+    from gr00t.model.gr00t_n1d7.image_augmentations import BackgroundNoiseTransform
+
+    shutil.copytree(FIXTURE_DIR, tmp_path, dirs_exist_ok=True)
+    config_path = tmp_path / "processor_config.json"
+    config = json.loads(config_path.read_text())
+    config["processor_kwargs"]["use_percentiles"] = not use_percentiles
+    config_path.write_text(json.dumps(config))
+    augmentation = {"background_noise_transforms": [{"target_mask_values": [0], "p": 1.0}]}
+    with patch.object(processor_module, "build_processor", return_value=MagicMock()):
+        processor = processor_module.Gr00tN1d7Processor.from_pretrained(
+            tmp_path, use_percentiles=use_percentiles, extra_augmentation_config=augmentation
+        )
+    assert processor.state_action_processor.use_percentiles is use_percentiles
+    assert processor.extra_augmentation_config == augmentation
+    assert len(processor.train_image_transform.mask_transforms) == 1
+    assert isinstance(processor.train_image_transform.mask_transforms[0], BackgroundNoiseTransform)
 
 
 def _make_step_data(proc_config) -> VLAStepData:
