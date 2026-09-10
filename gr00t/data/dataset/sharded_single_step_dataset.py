@@ -1,5 +1,19 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 from pathlib import Path
-from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -47,6 +61,7 @@ def extract_step_data(
 
     # Parse extracted data into VLAStepData structure
     video_data = step_data.get("video", {})
+    mask_data = step_data.get("mask", {})
     state_data = step_data.get("state", {})
     action_data = step_data.get("action", {})
     language_data = step_data.get("language", {})
@@ -55,6 +70,7 @@ def extract_step_data(
 
     vla_step_data = VLAStepData(
         images=video_data,
+        masks=mask_data if mask_data else None,
         states=state_data,
         actions=action_data,
         text=text,
@@ -88,8 +104,6 @@ class ShardedSingleStepDataset(ShardedDataset):
         dataset_path: Path to LeRobot format dataset directory
         embodiment_tag: Embodiment identifier for cross-embodiment training
         modality_configs: Configuration for each modality (sampling, keys)
-        video_backend: Video decoding backend ('torchcodec', 'decord', etc.)
-        video_backend_kwargs: Additional arguments for video backend
         shard_size: Target number of timesteps per shard
         episode_sampling_rate: Fraction of episode timesteps to use (for efficiency)
         seed: Random seed for reproducible sharding and sampling
@@ -117,8 +131,6 @@ class ShardedSingleStepDataset(ShardedDataset):
         dataset_path: str | Path,
         embodiment_tag: EmbodimentTag,
         modality_configs: dict[str, ModalityConfig],
-        video_backend: str = "torchcodec",
-        video_backend_kwargs: dict[str, Any] | None = None,
         shard_size: int = 2**10,  # 1024 steps
         episode_sampling_rate: float = 0.1,
         seed: int = 42,
@@ -128,8 +140,6 @@ class ShardedSingleStepDataset(ShardedDataset):
         super().__init__(dataset_path)
         self.embodiment_tag = embodiment_tag
         self.modality_configs = modality_configs
-        self.video_backend = video_backend
-        self.video_backend_kwargs = video_backend_kwargs
         self.shard_size = shard_size
         self.episode_sampling_rate = episode_sampling_rate
         self.seed = seed
@@ -142,8 +152,6 @@ class ShardedSingleStepDataset(ShardedDataset):
         self.episode_loader = LeRobotEpisodeLoader(
             dataset_path=dataset_path,
             modality_configs=modality_configs,
-            video_backend=video_backend,
-            video_backend_kwargs=video_backend_kwargs,
         )
 
         # Create balanced shards from episode timesteps
@@ -171,27 +179,44 @@ class ShardedSingleStepDataset(ShardedDataset):
             f"No valid trajectories found for dataset {self.dataset_path}"
         )
 
-        # Calculate total timesteps and required number of shards
-        total_steps = np.sum(
-            [self.get_effective_episode_length(idx) for idx in shuffled_episode_indices]
-        ).astype(int)
-        num_shards = np.ceil(total_steps / self.shard_size).astype(int)
+        # Build non-empty episode sub-sequences first. Small datasets can have fewer
+        # non-empty sub-sequences than the shard count implied by shard_size.
+        episode_splits = []
+        total_steps = 0
+        for ep_idx in shuffled_episode_indices:
+            step_indices = np.arange(0, self.get_effective_episode_length(ep_idx))
+            self.rng.shuffle(step_indices)
+            total_steps += len(step_indices)
+            for i in range(num_splits):
+                split_step_indices = step_indices[i::num_splits]
+                if len(split_step_indices) > 0:
+                    episode_splits.append((ep_idx, split_step_indices))
+
+        assert total_steps > 0 and len(episode_splits) > 0, (
+            f"No valid timesteps found for dataset {self.dataset_path}; "
+            f"episode lengths may be shorter than action horizon {self.action_horizon}"
+        )
+
+        # Calculate num_shards: bounded by total_steps/shard_size and episode_splits count
+        # Never more shards than episode_splits to ensure all shards are non-empty
+        num_shards = min(np.ceil(total_steps / self.shard_size).astype(int), len(episode_splits))
 
         # Initialize shard containers
         sharded_episodes = [[] for _ in range(num_shards)]
         shard_lengths = np.zeros(num_shards, dtype=int)
 
         # Distribute episode sub-sequences across shards
-        for ep_idx in shuffled_episode_indices:
-            # Split episode timesteps into multiple sub-sequences
-            step_indices = np.arange(0, self.get_effective_episode_length(ep_idx))
-            self.rng.shuffle(step_indices)
-            for i in range(num_splits):
-                split_step_indices = step_indices[i::num_splits]
-                # Assign to shard with minimum current length (greedy balancing)
+        # First pass: ensure each shard gets at least one episode_split (round-robin)
+        # This guarantees no shard is empty when num_shards <= len(episode_splits)
+        for i, (ep_idx, split_step_indices) in enumerate(episode_splits):
+            if i < num_shards:
+                # First num_shards items: one per shard (guarantees non-empty)
+                shard_index = i
+            else:
+                # Remaining items: assign to shard with minimum current length (greedy balancing)
                 shard_index = np.argmin(shard_lengths)
-                sharded_episodes[shard_index].append((ep_idx, split_step_indices))
-                shard_lengths[shard_index] += len(split_step_indices)
+            sharded_episodes[shard_index].append((ep_idx, split_step_indices))
+            shard_lengths[shard_index] += len(split_step_indices)
 
         # Validate shard creation
         assert all(shard_lengths[i] > 0 for i in range(num_shards)), (
@@ -233,7 +258,11 @@ class ShardedSingleStepDataset(ShardedDataset):
         """
         assert self.processor is not None, "Processor must be set before getting datapoints"
         vla_step_data = extract_step_data(
-            episode_data, step_index, self.modality_configs, self.embodiment_tag, self.allow_padding
+            episode_data,
+            step_index,
+            self.modality_configs,
+            self.embodiment_tag,
+            self.allow_padding,
         )
         # Apply processor to convert to model inputs
         messages = [{"type": MessageType.EPISODE_STEP.value, "content": vla_step_data}]

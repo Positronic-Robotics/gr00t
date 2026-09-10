@@ -1,3 +1,18 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 SO100 Real-Robot Gr00T Policy Evaluation Script
 
@@ -25,21 +40,35 @@ from pprint import pformat
 import time
 from typing import Any, Dict, List
 
-import draccus
 from gr00t.policy.server_client import PolicyClient
-
-# Importing various robot configs ensures CLI autocompletion works
-from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig  # noqa: F401
-from lerobot.robots import (  # noqa: F401
-    Robot,
-    RobotConfig,
-    koch_follower,
-    make_robot_from_config,
-    so100_follower,
-    so101_follower,
-)
-from lerobot.utils.utils import init_logging, log_say
 import numpy as np
+
+
+try:
+    import draccus
+
+    # Importing various robot configs ensures CLI autocompletion works.
+    from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig  # noqa: F401
+    from lerobot.robots import (  # noqa: F401
+        Robot,
+        RobotConfig,
+        koch_follower,
+        make_robot_from_config,
+        so100_follower,
+        so101_follower,
+    )
+    from lerobot.utils.utils import init_logging, log_say
+except ModuleNotFoundError as exc:
+    if exc.name is not None and (
+        exc.name in {"draccus", "lerobot"} or exc.name.startswith("lerobot.")
+    ):
+        raise ModuleNotFoundError(
+            "SO100 real-robot evaluation uses its own client environment. Run "
+            "`cd gr00t/eval/real_robot/SO100 && uv venv && source .venv/bin/activate && "
+            "uv pip install -e . --verbose && uv pip install --no-deps -e ../../../../` "
+            "before launching eval_so100.py."
+        ) from None
+    raise
 
 
 def recursive_add_extra_dim(obs: Dict) -> Dict:
@@ -178,6 +207,20 @@ class EvalConfig:
 # =============================================================================
 
 
+def _select_action_steps(actions: List[Dict], action_horizon: int) -> List[Dict]:
+    """Return the first ``action_horizon`` steps of a policy action chunk.
+
+    Raises if the policy produced fewer steps than requested so a misconfigured
+    horizon fails loudly instead of silently executing fewer steps than asked.
+    """
+    if action_horizon > len(actions):
+        raise ValueError(
+            f"Configured action_horizon={action_horizon} exceeds the policy action "
+            f"chunk length {len(actions)}; the policy cannot supply that many steps."
+        )
+    return actions[:action_horizon]
+
+
 @draccus.wrap()
 def eval(cfg: EvalConfig):
     """
@@ -227,7 +270,7 @@ def eval(cfg: EvalConfig):
 
         actions = policy.get_action(obs)
 
-        for i, action_dict in enumerate(actions[: cfg.action_horizon]):
+        for i, action_dict in enumerate(_select_action_steps(actions, cfg.action_horizon)):
             tic = time.time()
             print(f"action[{i}]: {action_dict}")
             # action_dict = {

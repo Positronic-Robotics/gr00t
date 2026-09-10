@@ -1,3 +1,18 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 Unified processor for robot state and action data.
 
@@ -9,6 +24,7 @@ Handles:
 """
 
 from copy import deepcopy
+import logging
 
 from gr00t.configs.data.embodiment_configs import (
     ActionFormat,
@@ -30,6 +46,9 @@ from gr00t.data.utils import (
 import numpy as np
 
 
+logger = logging.getLogger(__name__)
+
+
 class StateActionProcessor:
     """
     Unified processor for robot state and action data.
@@ -44,7 +63,7 @@ class StateActionProcessor:
     def __init__(
         self,
         modality_configs: dict[str, dict[str, ModalityConfig]],
-        statistics: dict[str, dict[str, dict[str, dict[str, list[float]]]]] | None = None,
+        statistics: (dict[str, dict[str, dict[str, dict[str, list[float]]]]] | None) = None,
         use_percentiles: bool = False,
         clip_outliers: bool = True,
         apply_sincos_state_encoding: bool = False,
@@ -106,7 +125,21 @@ class StateActionProcessor:
             if key not in self.statistics or override:
                 self.statistics[key] = deepcopy(statistics[key])
             else:
-                print(f"Embodiment tag {key} already in statistics, skipping updating")
+                # Surfaced as a warning (not print) because callers running with
+                # override_pretraining_statistics=False on a mixture dataset will
+                # otherwise silently keep the pre-existing pretraining stats and
+                # discard newly-merged per-dataset stats — training proceeds with
+                # the wrong mean/std and only an easy-to-miss stdout line records
+                # the drop.
+                logger.warning(
+                    "Statistics for embodiment %r already present; new stats "
+                    "DISCARDED (override=False). If the new data differs from "
+                    "the existing distribution this will cause silent "
+                    "normalization mismatch — pass override=True (or "
+                    "override_pretraining_statistics=True at the dataset level) "
+                    "to use the merged stats instead.",
+                    key,
+                )
         self._compute_normalization_parameters()
 
     def _compute_normalization_parameters(self) -> None:
@@ -210,7 +243,10 @@ class StateActionProcessor:
 
             # Strategy 2: Mean/std normalization
             elif (
-                hasattr(self.modality_configs[embodiment_tag]["state"], "mean_std_embedding_keys")
+                hasattr(
+                    self.modality_configs[embodiment_tag]["state"],
+                    "mean_std_embedding_keys",
+                )
                 and self.modality_configs[embodiment_tag]["state"].mean_std_embedding_keys
                 and joint_group
                 in self.modality_configs[embodiment_tag]["state"].mean_std_embedding_keys
@@ -273,7 +309,10 @@ class StateActionProcessor:
 
             # Reverse mean/std normalization
             elif (
-                hasattr(self.modality_configs[embodiment_tag]["state"], "mean_std_embedding_keys")
+                hasattr(
+                    self.modality_configs[embodiment_tag]["state"],
+                    "mean_std_embedding_keys",
+                )
                 and self.modality_configs[embodiment_tag]["state"].mean_std_embedding_keys
                 and joint_group
                 in self.modality_configs[embodiment_tag]["state"].mean_std_embedding_keys
@@ -609,21 +648,8 @@ class StateActionProcessor:
         assert reference_state.ndim == 1, f"Expected state shape (D,), got {reference_state.shape}"
 
         if action_type == ActionType.EEF:
-            assert action.shape[1] == 9, (
-                f"Expected action dim 9 (xyz + rot6d) for EEF, got {action.shape[1]}"
-            )
-
-            action_chunking = EndEffectorActionChunk(
-                [
-                    EndEffectorPose(translation=m[:3], rotation=m[3:], rotation_type="rot6d")
-                    for m in action
-                ]
-            )
-            reference_frame = EndEffectorPose(
-                translation=reference_state[:3],
-                rotation=reference_state[3:],
-                rotation_type="rot6d",
-            )
+            action_chunking = EndEffectorActionChunk.from_array(action, action_format)
+            reference_frame = EndEffectorPose.from_action_format(reference_state, action_format)
 
         elif action_type == ActionType.NON_EEF:
             action_chunking = JointActionChunk([JointPose(m) for m in action])
@@ -652,21 +678,8 @@ class StateActionProcessor:
         )
 
         if action_type == ActionType.EEF:
-            assert action.shape[1] == 9, (
-                f"Expected action dim 9 (xyz + rot6d) for EEF, got {action.shape[1]}"
-            )
-
-            rel_action = EndEffectorActionChunk(
-                [
-                    EndEffectorPose(translation=m[:3], rotation=m[3:], rotation_type="rot6d")
-                    for m in action
-                ]
-            )
-            reference_frame = EndEffectorPose(
-                translation=reference_state[:3],
-                rotation=reference_state[3:],
-                rotation_type="rot6d",
-            )
+            rel_action = EndEffectorActionChunk.from_array(action, action_format)
+            reference_frame = EndEffectorPose.from_action_format(reference_state, action_format)
 
         elif action_type == ActionType.NON_EEF:
             rel_action = JointActionChunk([JointPose(pose) for pose in action])

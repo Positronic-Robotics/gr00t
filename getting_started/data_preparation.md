@@ -2,7 +2,7 @@
 
 ## Overview
 
-This guide shows how to convert your robot data to work with our flavor of the [LeRobot dataset V2 format](https://github.com/huggingface/lerobot?tab=readme-ov-file#the-lerobotdataset-format) -- `GR00T LeRobot`. While we have added additional structure, our schema maintains full compatibility with the upstream LeRobot v2. The additional metadata and structure allow for more detailed specification and language annotations for your robot data.
+This guide shows how to convert your robot data to work with our flavor of the [LeRobot dataset V2 format](https://github.com/huggingface/lerobot?tab=readme-ov-file#the-lerobotdataset-format) ([LeRobot docs](https://huggingface.co/docs/lerobot)) -- `GR00T LeRobot`. While we have added additional structure, our schema maintains full compatibility with the upstream LeRobot v2. The additional metadata and structure allow for more detailed specification and language annotations for your robot data.
 
 > The TLDR: Add a `meta/modality.json` file to your LeRobot v2 dataset and follow the schema below.
 
@@ -11,6 +11,8 @@ This guide shows how to convert your robot data to work with our flavor of the [
 If you already have a dataset in the LeRobot v2 format, you can skip this section.
 
 If you have a dataset in the LeRobot v3.0 format, please use [this script](../scripts/lerobot_conversion/convert_v3_to_v2.py) to convert it to the LeRobot v2 format.
+
+> **Why LeRobot v2?** GR00T currently uses the LeRobot v2 data format because many upstream datasets (DROID, LIBERO, Bridge, etc.) are published in v2. We plan to support both v2 and v3 formats natively in a future release. For now, please convert v3 datasets to v2 using the script above.
 
 If you have a dataset in another format, please convert it to the LeRobot v2 format satisfying the following requirements.
 
@@ -52,21 +54,32 @@ Each parquet file will contain:
 - Annotations: stored as annotation.<annotation_source>.<annotation_type>(.<annotation_name>) (see the annotation field in the example configuration for example naming.).  No other columns should have the annotation prefix, see the (multiple-annotation-support) if interested in adding multiple annotations.
 
 #### Example Parquet File
-Here is a sample of the `cube_to_bowl` dataset that is present in the [demo_data](../demo_data/cube_to_bowl_5/) directory.
+Here is an illustrative parquet row. The language annotation column uses the same key as the [`cube_to_bowl`](../demo_data/cube_to_bowl_5/) demo dataset (`annotation.human.task_description`).
 ```
 {
-    "observation.state":[-0.01147082911843003,...,0], // concatenated state array based on the modality.json file
-    "action":[-0.010770668025204974,...0], // concatenated action array based on the modality.json file
-    "timestamp":0.04999995231628418, // timestamp of the observation
-    "annotation.human.action.task_description":0, // index of the task description in the meta/tasks.jsonl file
-    "task_index":0, // index of the task in the meta/tasks.jsonl file
-    "annotation.human.validity":1, // index of the task in the meta/tasks.jsonl file
-    "episode_index":0, // index of the episode
-    "index":0, // index of the observation. This is a global index across all observations in the dataset.
-    "next.reward":0, // reward of the next observation
-    "next.done":false // whether the episode is done
+    "observation.state":[-0.01,...,0],       // 1D array: all state modalities concatenated per modality.json order
+    "action":[-0.010,...,0],                 // 1D array: all action modalities concatenated per modality.json order
+    "timestamp":0.049,                       // float: wall-clock time of this observation (seconds)
+    "annotation.human.task_description":0,   // int: index into meta/tasks.jsonl for the language instruction
+    "task_index":0,                          // int: task identifier (same as annotation index for single-task)
+    "episode_index":0,                       // int: which episode this frame belongs to
+    "index":0,                               // int: global frame index across all episodes in the dataset
+    "next.reward":0,                         // float: reward at the next timestep (0 if unused)
+    "next.done":false                        // bool: true if this is the last frame of the episode
 }
 ```
+
+#### Annotation Column Naming
+
+A language annotation appears in three places that must all agree. The segments after `annotation.` are chosen by the dataset author following `annotation.<source>.<type>(.<name>)`, so different datasets use different keys — always match the exact key your dataset uses:
+
+| Layer | Where it lives | `cube_to_bowl` / SO-100 | LIBERO / SimplerEnv |
+|-------|----------------|-------------------------|---------------------|
+| Parquet column | `data/chunk-*/*.parquet` | `annotation.human.task_description` | `annotation.human.action.task_description` |
+| `modality.json` key | under `"annotation"` (no `annotation.` prefix) | `human.task_description` | `human.action.task_description` |
+| `modality_keys` in the data config | `ModalityConfig(...)`, see [data_config.md](data_config.md#language-modality) | `annotation.human.task_description` | `annotation.human.action.task_description` |
+
+Both forms above are valid; these docs use the SO-100 form (`annotation.human.task_description`) in examples. See [Multiple Annotation Support](#multiple-annotation-support) for adding more than one annotation channel.
 
 ### Meta
 
@@ -77,13 +90,13 @@ Here is a sample of the `cube_to_bowl` dataset that is present in the [demo_data
 #### meta/tasks.jsonl
 Here is a sample of the `meta/tasks.jsonl` file that contains the task descriptions.
 ```
-{"task_index": 0, "task": "pick the squash from the counter and place it in the plate"}
-{"task_index": 1, "task": "valid"}
+{"task_index": 0, "task": "cube into yellow bowl"}
+{"task_index": 1, "task": "cube into green bowl"}
 ```
 
-You can refer the task index in the parquet file to get the task description. So in this case, the `annotation.human.action.task_description` for the first observation is "pick the squash from the counter and place it in the plate" and `annotation.human.validity` is "valid".
+You can refer the task index in the parquet file to get the task description. So in this case, the `annotation.human.task_description` for the first observation is "cube into yellow bowl".
 
-`tasks.json` contains a list of all the tasks in the entire dataset.
+`tasks.jsonl` contains a list of all the tasks in the entire dataset.
 
 #### meta/episodes.jsonl
 
@@ -94,7 +107,7 @@ Here is a sample of the `meta/episodes.jsonl` file that contains the episode inf
 {"episode_index": 1, "tasks": [...], "length": 470}
 ```
 
-`episodes.json` contains a list of all the episodes in the entire dataset. Each episode contains a list of tasks and the length of the episode.
+`episodes.jsonl` contains a list of all the episodes in the entire dataset. Each episode contains a list of tasks and the length of the episode.
 
 ## GR00T LeRobot Specific Requirements
 
@@ -136,6 +149,13 @@ We require an additional metadata file `meta/modality.json` that is not present 
     }
 }
 ```
+
+#### Example
+
+For a concrete example of `modality.json` and the full dataset structure, see the publicly available datasets on HuggingFace:
+[nvidia/PhysicalAI-Robotics-GR00T-X-Embodiment-Sim](https://huggingface.co/datasets/nvidia/PhysicalAI-Robotics-GR00T-X-Embodiment-Sim/tree/main).
+
+You can also find a working example in the included demo data at [`demo_data/cube_to_bowl_5/meta/modality.json`](../demo_data/cube_to_bowl_5/meta/modality.json).
 
 #### Notes
 
