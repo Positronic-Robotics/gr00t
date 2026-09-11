@@ -28,7 +28,8 @@ make -C docker push
 ```
 
 The Makefile publishes `positro/gr00t-base` with `latest`, version, and commit tags.
-It builds for the host architecture; use `DOCKER_DEFAULT_PLATFORM=linux/amd64` to cross-build.
+It targets `linux/amd64`, including when built on an Apple Silicon Mac.
+For a native ARM build, use `bash docker/build.sh` on the target host.
 Positronic's `GROOT_BASE_IMAGE` selects an existing base image for its adapter build.
 
 Fine-tuning defaults to the base checkpoint's saved model and modality configuration.

@@ -39,7 +39,7 @@ build:
 		echo "Error: Could not extract version from pyproject.toml"; \
 		exit 1; \
 	fi
-	docker build \
+	docker build --platform linux/amd64 \
 		-f Dockerfile \
 		-t $(LOCAL_TAG_GROOT) ..
 
