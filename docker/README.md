@@ -15,23 +15,21 @@ Docker configuration for building and running a containerized GR00T environment 
 From the repository root:
 
 ```bash
-make -C docker build
+bash docker/build.sh
 ```
 
-This builds from `nvidia/cuda:12.8.0-devel-ubuntu24.04` and installs all dependencies into `/opt/gr00t-venv`. The image includes this fork at `/gr00t`, installed into `/opt/gr00t-venv`. Positronic launches that environment directly.
-
-Docker builds for the host architecture. To cross-build, use Docker's standard setting,
-for example `DOCKER_DEFAULT_PLATFORM=linux/amd64 make -C docker build`.
+This builds from `nvidia/cuda:12.8.0-devel-ubuntu24.04` and installs all dependencies into `/opt/gr00t-venv`. The image includes this fork at `/gr00t`, installed into `/opt/gr00t-venv`.
 
 ## Positronic base image
 
 ```bash
 make -C docker build
-make -C docker push IMAGE_TAG=my-branch
+make -C docker push
 ```
 
-The Makefile publishes `positro/gr00t-base` with branch and commit tags. It does not replace
-`latest`. Positronic's `GROOT_BASE_IMAGE` selects this image for its adapter build.
+The Makefile publishes `positro/gr00t-base` with `latest`, version, and commit tags.
+It builds for the host architecture; use `DOCKER_DEFAULT_PLATFORM=linux/amd64` to cross-build.
+Positronic's `GROOT_BASE_IMAGE` selects an existing base image for its adapter build.
 
 Fine-tuning defaults to the base checkpoint's saved model and modality configuration.
 The Python launcher accepts `--video-keys` to select the fine-tuning camera layout; omitted, it retains the checkpoint's views.
@@ -50,39 +48,43 @@ The policy server accepts `--model-path hf://nvidia/GR00T-N1.7-DROID` and downlo
 
 ## Running the Container
 
-Run the included fork from `/gr00t`:
+**Run the included fork from `/gr00t`.**
+
+Start an interactive shell:
 
 ```bash
 docker run -it --rm --gpus all \
     --ipc=host --ulimit memlock=-1 --ulimit stack=67108864 \
-    -v "$HOME/.cache/huggingface:/root/.cache/huggingface" \
-    positro/gr00t-base:local
+    gr00t
 ```
 
-Inside the container:
+Then, inside the container:
 
 ```bash
 cd /gr00t
-uv run --no-sync python -c "import gr00t; print(gr00t.__file__)"
+python -c "import gr00t; print('GR00T ready')"
 ```
 
-The image includes the fork and its locked environment at `/opt/gr00t-venv`.
-The Hugging Face account must have access to the gated `nvidia/Cosmos-Reason2-2B` backbone.
-Provide its token through the mounted Hugging Face cache or `HF_TOKEN`.
+The image venv is active by default (`/opt/gr00t-venv`; `/workspace/.venv` is a compatibility symlink), and uv is configured with `UV_PROJECT_ENVIRONMENT=/opt/gr00t-venv`. After setting `PYTHONPATH` to the checked-out repo, both `python ...` and `uv run ...` use the global image venv instead of creating a checkout-local `.venv`. If you are working on an existing checkout in the container, run `git pull --ff-only` from that checkout instead of cloning again.
 
-For development, mount a compatible fork checkout over `/gr00t`:
+The global venv records the `uv.lock` hash it was built from. If your checked-out repo uses a different lockfile, create a checkout-local venv before running commands. Reusing a uv cache keeps this path from starting cold:
 
 ```bash
-docker run -it --rm --gpus all --ipc=host \
-    -v "$PWD:/gr00t" positro/gr00t-base:local
+export UV_CACHE_DIR="${UV_CACHE_DIR:-/workspace/uv-cache}"
+export UV_LINK_MODE=copy
+UV_PROJECT_ENVIRONMENT="$PWD/.venv" uv sync
+source .venv/bin/activate
 ```
 
-If its lockfile differs from the image, create a separate environment:
+Do not run a bare `uv sync` unless you intend to update the global image venv. Use `UV_PROJECT_ENVIRONMENT="$PWD/.venv" uv sync` when you want an isolated per-checkout environment.
+
+Avoid bind-mounting over `/workspace`, because that can hide the image's `/workspace/.venv` compatibility symlink. If you need to mount local source for live editing, mount it under a subdirectory:
 
 ```bash
-export UV_PROJECT_ENVIRONMENT=/gr00t/.venv
-uv sync --locked --extra dev
-source /gr00t/.venv/bin/activate
+docker run -it --rm --gpus all \
+    --ipc=host --ulimit memlock=-1 --ulimit stack=67108864 \
+    -v "$(pwd):/workspace/Isaac-GR00T" \
+    gr00t bash -c 'cd /workspace/Isaac-GR00T && export PYTHONPATH="$PWD${PYTHONPATH:+:$PYTHONPATH}" && bash'
 ```
 
 ## Edge Device Containers
