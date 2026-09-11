@@ -225,4 +225,10 @@ ENV MUJOCO_GL="egl" \
 # bootstrap_wheels.sh before sync (then committed back) if missing. flash-attn
 # comes from official release URLs — no source build needed.
 
+# Install the fork alongside its dependency environment for Positronic subprocesses.
+WORKDIR /gr00t
+COPY . /gr00t
+RUN uv pip install --python /opt/gr00t-venv/bin/python --no-deps -e /gr00t
+ENV PYTHONPATH=/gr00t
+
 CMD ["/bin/bash"]

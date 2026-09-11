@@ -16,15 +16,19 @@
 # Launch finetuning for N1.7 on "single node".
 # This script tries to provide a similar user experience as current OSS.
 
+import copy
 import json
 import os
 from pathlib import Path
 
+from transformers.utils import cached_file
 import tyro
 
 from gr00t.configs.base_config import get_default_config
 from gr00t.configs.finetune_config import FinetuneConfig
-from gr00t.experiment.experiment import run
+from gr00t.configs.model.gr00t_n1d7 import Gr00tN1d7Config
+from gr00t.data.embodiment_tags import EmbodimentTag
+from gr00t.data.types import ModalityConfig
 
 
 # Make sure the user provided modality config is registered.
@@ -41,16 +45,9 @@ def load_modality_config(modality_config_path: str):
         raise FileNotFoundError(f"Modality config path does not exist: {modality_config_path}")
 
 
-if __name__ == "__main__":
-    # Set LOGURU_LEVEL environment variable if not already set (default: INFO)
-    if "LOGURU_LEVEL" not in os.environ:
-        os.environ["LOGURU_LEVEL"] = "INFO"
-    # Use tyro for clean CLI
-    ft_config = tyro.cli(FinetuneConfig, description=__doc__)
-    from gr00t.data.embodiment_tags import EmbodimentTag
-
-    ft_config.embodiment_tag = EmbodimentTag.resolve(ft_config.embodiment_tag)
-    embodiment_tag = ft_config.embodiment_tag.value
+def build_config(ft_config: FinetuneConfig):
+    """Inherit model and modality contracts from the checkpoint before applying training overrides."""
+    embodiment_tag = EmbodimentTag.resolve(ft_config.embodiment_tag).value
 
     # all rank workers should register for the modality config
     if ft_config.modality_config_path is not None:
@@ -73,6 +70,24 @@ if __name__ == "__main__":
         }
     )
     config.load_config_path = None
+    config.model = Gr00tN1d7Config.from_pretrained(ft_config.base_model_path)
+    checkpoint = Path(ft_config.base_model_path)
+    processor_root = checkpoint / "processor" if (checkpoint / "processor").is_dir() else checkpoint
+    processor_file = cached_file(str(processor_root), "processor_config.json")
+    with open(processor_file) as f:
+        processor_kwargs = json.load(f)["processor_kwargs"]
+    config.model.use_relative_action = processor_kwargs["use_relative_action"]
+    if ft_config.modality_config_path is None:
+        modalities = processor_kwargs["modality_configs"][embodiment_tag]
+        config.data.modality_configs = {
+            embodiment_tag: {name: ModalityConfig(**value) for name, value in modalities.items()}
+        }
+    else:
+        config.data.modality_configs = copy.deepcopy(config.data.modality_configs)
+    if ft_config.video_keys is not None:
+        if not ft_config.video_keys or len(set(ft_config.video_keys)) != len(ft_config.video_keys):
+            raise ValueError("video_keys must be nonempty and unique")
+        config.data.modality_configs[embodiment_tag]["video"].modality_keys = ft_config.video_keys
 
     # overwrite with finetune config supplied by the user
     config.model.tune_llm = ft_config.tune_llm
@@ -80,14 +95,17 @@ if __name__ == "__main__":
     config.model.tune_projector = ft_config.tune_projector
     config.model.tune_diffusion_model = ft_config.tune_diffusion_model
     config.model.state_dropout_prob = ft_config.state_dropout_prob
-    config.model.random_rotation_angle = ft_config.random_rotation_angle
-    config.model.color_jitter_params = ft_config.color_jitter_params
+    if ft_config.random_rotation_angle is not None:
+        config.model.random_rotation_angle = ft_config.random_rotation_angle
+    if ft_config.color_jitter_params is not None:
+        config.model.color_jitter_params = ft_config.color_jitter_params
     config.model.use_percentiles = ft_config.use_percentiles
     if (ft_config.shortest_image_edge is None) != (ft_config.crop_fraction is None):
         raise ValueError("shortest_image_edge and crop_fraction must be set together")
     if ft_config.shortest_image_edge is not None:
         config.model.shortest_image_edge = ft_config.shortest_image_edge
         config.model.crop_fraction = ft_config.crop_fraction
+    if config.model.shortest_image_edge is not None and config.model.crop_fraction is not None:
         config.model.image_crop_size = None
         config.model.image_target_size = None
     if ft_config.extra_augmentation_config:
@@ -99,7 +117,6 @@ if __name__ == "__main__":
     config.model.reproject_vision = False
     config.model.model_name = "nvidia/Cosmos-Reason2-2B"
     config.model.backbone_trainable_params_fp32 = True
-    config.model.use_relative_action = True
 
     config.training.experiment_name = ft_config.experiment_name
     config.training.start_from_checkpoint = ft_config.base_model_path
@@ -127,4 +144,11 @@ if __name__ == "__main__":
     config.training.resume_from_checkpoint = ft_config.resume_from_checkpoint
     config.training.skip_weight_loading = ft_config.skip_weight_loading
 
-    run(config)
+    return config
+
+
+if __name__ == "__main__":
+    from gr00t.experiment.experiment import run
+
+    os.environ.setdefault("LOGURU_LEVEL", "INFO")
+    run(build_config(tyro.cli(FinetuneConfig, description=__doc__)))

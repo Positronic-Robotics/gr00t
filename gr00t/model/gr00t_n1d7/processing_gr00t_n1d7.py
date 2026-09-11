@@ -872,6 +872,8 @@ class Gr00tN1d7Processor(BaseProcessor):
                 "exclude_state",
                 "state_dropout_prob",
                 "use_mean_std",
+                "use_percentiles",
+                "extra_augmentation_config",
                 "model_name",
                 "model_type",
                 "max_action_horizon",

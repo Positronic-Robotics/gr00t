@@ -22,7 +22,7 @@ Uses mocked model and processor to avoid downloading checkpoints.
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from gr00t.data.types import ModalityConfig
+from gr00t.data.types import LANGUAGE, ModalityConfig
 import numpy as np
 import pytest
 import torch
@@ -44,13 +44,12 @@ def _build_modality_configs():
             "video": ModalityConfig(delta_indices=[0], modality_keys=VIDEO_KEYS),
             "state": ModalityConfig(delta_indices=[0], modality_keys=STATE_KEYS),
             "action": ModalityConfig(delta_indices=list(range(16)), modality_keys=ACTION_KEYS),
-            "language": ModalityConfig(delta_indices=[0], modality_keys=[LANGUAGE_KEY]),
+            LANGUAGE: ModalityConfig(delta_indices=[0], modality_keys=[LANGUAGE_KEY]),
         }
     }
 
 
-@pytest.fixture
-def policy():
+def _make_policy(model_path):
     mock_model = MagicMock()
     mock_model.eval = MagicMock()
     mock_model.to = MagicMock(return_value=mock_model)
@@ -96,6 +95,7 @@ def policy():
     with (
         patch("gr00t.policy.gr00t_policy.AutoModel") as MockAutoModel,
         patch("gr00t.policy.gr00t_policy.AutoProcessor") as MockAutoProcessor,
+        patch("gr00t.policy.gr00t_policy.snapshot_download", return_value="/fake/path") as download,
         patch("pathlib.Path.is_dir", return_value=False),
         patch("pathlib.Path.exists", return_value=True),
     ):
@@ -106,10 +106,25 @@ def policy():
 
         p = Gr00tPolicy(
             embodiment_tag=EMBODIMENT,
-            model_path="/fake/path",
+            model_path=model_path,
             device="cpu",
         )
+        if model_path.startswith("hf://"):
+            download.assert_called_once_with("owner/model")
+        else:
+            download.assert_not_called()
+        MockAutoModel.from_pretrained.assert_called_once_with(Path("/fake/path"))
     return p
+
+
+@pytest.fixture
+def policy():
+    return _make_policy("/fake/path")
+
+
+@pytest.mark.parametrize("model_path", ["/fake/path", "hf://owner/model"])
+def test_policy_resolves_local_and_hub_checkpoints(model_path):
+    _make_policy(model_path)
 
 
 def _make_observation(batch_size=1):
@@ -123,7 +138,7 @@ def _make_observation(batch_size=1):
             for k in STATE_KEYS[:-1]  # all except gripper
         }
         | {"gripper": np.random.randn(batch_size, 1, 2).astype(np.float32)},
-        "language": {
+        LANGUAGE: {
             LANGUAGE_KEY: [["pick up the apple"]] * batch_size,
         },
     }
@@ -139,6 +154,20 @@ class TestGr00tPolicyInit:
 
 
 class TestGr00tPolicyCheckObservation:
+    def test_inference_requires_only_the_selected_language_key(self, policy):
+        policy.modality_configs[LANGUAGE].modality_keys.append("training_paraphrase")
+        observation = _make_observation()
+        policy.get_action(observation)
+        del observation[LANGUAGE][LANGUAGE_KEY]
+        with pytest.raises(AssertionError, match="Language key"):
+            policy.check_observation(observation)
+
+    def test_extra_camera_cannot_be_silently_ignored(self, policy):
+        obs = _make_observation()
+        obs["video"]["second_external"] = obs["video"][VIDEO_KEYS[0]]
+        with pytest.raises(ValueError, match="Checkpoint cameras"):
+            policy.check_observation(obs)
+
     def test_valid_observation_passes(self, policy):
         obs = _make_observation()
         policy.check_observation(obs)
@@ -179,11 +208,12 @@ class _NumpyLanguageSimPolicy:
                 modality_keys=["state"],
             ),
             "action": ModalityConfig(delta_indices=[0], modality_keys=["action"]),
-            "language": ModalityConfig(
+            LANGUAGE: ModalityConfig(
                 delta_indices=[0],
                 modality_keys=["annotation.human.action.task_description"],
             ),
         }
+        self.language_key = self.modality_configs[LANGUAGE].modality_keys[0]
         self.last_observation = None
 
     def get_modality_config(self):
@@ -197,10 +227,12 @@ class _NumpyLanguageSimPolicy:
         return {}
 
 
-def test_sim_policy_wrapper_accepts_numpy_language_batches():
+@pytest.mark.parametrize("extra_language_keys", [[], ["training_paraphrase"]])
+def test_sim_policy_wrapper_accepts_numpy_language_batches(extra_language_keys):
     from gr00t.policy.gr00t_policy import Gr00tSimPolicyWrapper
 
     policy = _NumpyLanguageSimPolicy()
+    policy.modality_configs[LANGUAGE].modality_keys.extend(extra_language_keys)
     wrapper = Gr00tSimPolicyWrapper(policy)
     observation = {
         "video.camera": np.zeros((1, 1, 256, 256, 3), dtype=np.uint8),
@@ -210,6 +242,23 @@ def test_sim_policy_wrapper_accepts_numpy_language_batches():
 
     action, info = wrapper.get_action(observation)
 
-    assert policy.last_observation["language"][LANGUAGE_KEY] == [["follow the instruction"]]
+    assert policy.last_observation[LANGUAGE][LANGUAGE_KEY] == [["follow the instruction"]]
+    assert list(policy.last_observation[LANGUAGE]) == [policy.language_key]
     assert "action.action" in action
     assert info == {}
+
+
+def test_sim_policy_wrapper_requires_selected_language_key():
+    from gr00t.policy.gr00t_policy import Gr00tSimPolicyWrapper
+
+    policy = _NumpyLanguageSimPolicy()
+    policy.modality_configs[LANGUAGE].modality_keys.append("training_paraphrase")
+    wrapper = Gr00tSimPolicyWrapper(policy)
+    observation = {
+        "video.camera": np.zeros((1, 1, 256, 256, 3), dtype=np.uint8),
+        "state.state": np.zeros((1, 1, 3), dtype=np.float32),
+        "training_paraphrase": ["follow the instruction"],
+    }
+    with pytest.raises(AssertionError, match="Language key .* must be in observation"):
+        wrapper.get_action(observation)
+    assert policy.last_observation is None

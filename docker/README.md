@@ -18,11 +18,38 @@ From the repository root:
 bash docker/build.sh
 ```
 
-This builds from `nvidia/cuda:12.8.0-devel-ubuntu24.04` and installs all dependencies into `/opt/gr00t-venv`. The image does not include a working source checkout; for normal use, start the image and then clone or pull the repo you want to run inside the container.
+This builds from `nvidia/cuda:12.8.0-devel-ubuntu24.04` and installs all dependencies into `/opt/gr00t-venv`. The image includes this fork at `/gr00t`, installed into `/opt/gr00t-venv`.
+
+## Positronic base image
+
+```bash
+make -C docker build
+make -C docker push
+```
+
+The Makefile publishes `positro/gr00t-base` with `latest`, version, and commit tags.
+It targets `linux/amd64`, including when built on an Apple Silicon Mac.
+For a native ARM build, use `bash docker/build.sh` on the target host.
+Positronic's `GROOT_BASE_IMAGE` selects an existing base image for its adapter build.
+
+Fine-tuning defaults to the base checkpoint's saved model and modality configuration.
+The Python launcher accepts `--video-keys` to select the fine-tuning camera layout; omitted, it retains the checkpoint's views.
+When using `examples/finetune.sh`, put this option after the script's `--` passthrough delimiter:
+
+```bash
+bash examples/finetune.sh \
+    --base-model-path nvidia/GR00T-N1.7-DROID \
+    --dataset-path /data/droid \
+    --embodiment-tag oxe_droid_relative_eef_relative_joint \
+    --output-dir /data/checkpoints \
+    -- --video-keys exterior_image_1_left exterior_image_2_left wrist_image_left
+```
+
+The policy server accepts `--model-path hf://nvidia/GR00T-N1.7-DROID` and downloads that snapshot.
 
 ## Running the Container
 
-**Recommended workflow: run the image, then clone or update the repo inside it.**
+**Run the included fork from `/gr00t`.**
 
 Start an interactive shell:
 
@@ -35,9 +62,7 @@ docker run -it --rm --gpus all \
 Then, inside the container:
 
 ```bash
-git clone --recurse-submodules https://github.com/NVIDIA/Isaac-GR00T /workspace/Isaac-GR00T
-cd /workspace/Isaac-GR00T
-export PYTHONPATH="$PWD${PYTHONPATH:+:$PYTHONPATH}"
+cd /gr00t
 python -c "import gr00t; print('GR00T ready')"
 ```
 

@@ -23,13 +23,14 @@ This module provides the core policy classes for running Gr00t models:
 from pathlib import Path
 from typing import Any
 
+from huggingface_hub import snapshot_download
 import numpy as np
 import torch
 from transformers import AutoModel, AutoProcessor
 
 from gr00t.data.embodiment_tags import FINETUNE_ONLY_TAGS, POSTTRAIN_TAGS, EmbodimentTag
 from gr00t.data.interfaces import BaseProcessor
-from gr00t.data.types import MessageType, ModalityConfig, VLAStepData
+from gr00t.data.types import LANGUAGE, VIDEO, MessageType, ModalityConfig, VLAStepData
 
 from .policy import BasePolicy, PolicyWrapper
 
@@ -103,7 +104,10 @@ class Gr00tPolicy(BasePolicy):
         super().__init__(strict=strict)
         if isinstance(embodiment_tag, str):
             embodiment_tag = EmbodimentTag.resolve(embodiment_tag)
-        model_dir = Path(model_path)
+        if str(model_path).startswith("hf://"):
+            model_dir = Path(snapshot_download(str(model_path).removeprefix("hf://")))
+        else:
+            model_dir = Path(model_path)
 
         # Load the pretrained model and move to target device with bfloat16 precision
         model = AutoModel.from_pretrained(model_dir)
@@ -251,6 +255,12 @@ class Gr00tPolicy(BasePolicy):
         bs = -1
 
         # ===== VIDEO VALIDATION =====
+        expected_cameras = set(self.modality_configs[VIDEO].modality_keys)
+        if set(observation[VIDEO]) - expected_cameras:
+            raise ValueError(
+                f"Checkpoint cameras {sorted(expected_cameras)} do not match "
+                f"observation cameras {sorted(observation[VIDEO])}"
+            )
         # Validate each video stream defined in the modality config
         for video_key in self.modality_configs["video"].modality_keys:
             assert video_key in observation["video"], (
@@ -332,8 +342,8 @@ class Gr00tPolicy(BasePolicy):
             )
 
         # ===== LANGUAGE VALIDATION =====
-        # Validate each language stream defined in the modality config
-        for language_key in self.modality_configs["language"].modality_keys:
+        # Inference uses the first instruction key; additional keys are training paraphrases.
+        for language_key in self.modality_configs[LANGUAGE].modality_keys[:1]:
             # Check that the expected language key exists in the observation
             # (must happen before indexing — see video validation above)
             assert language_key in observation["language"], (
@@ -607,8 +617,8 @@ class Gr00tSimPolicyWrapper(PolicyWrapper):
             )
 
         # ===== LANGUAGE VALIDATION =====
-        # Check language modalities (special handling for DC environment compatibility)
-        for language_key in modality_configs["language"].modality_keys:
+        # Validate the instruction selected for inference, including its DC environment alias.
+        for language_key in modality_configs[LANGUAGE].modality_keys[:1]:
             # PATCH: Legacy compatibility for DC environments
             # DC envs use 'annotation.human.coarse_action' instead of 'task'
             if language_key == "task" and "annotation.human.coarse_action" in observation:
@@ -663,6 +673,8 @@ class Gr00tSimPolicyWrapper(PolicyWrapper):
         for modality in ["video", "state", "language"]:
             new_obs[modality] = {}
             for key in self.policy.modality_configs[modality].modality_keys:
+                if modality == LANGUAGE and key != self.policy.language_key:
+                    continue
                 if modality == "language":
                     # PATCH: Legacy compatibility for DC environments
                     if key == "task" and "annotation.human.coarse_action" in observation:
