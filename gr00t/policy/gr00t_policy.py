@@ -673,7 +673,10 @@ class Gr00tSimPolicyWrapper(PolicyWrapper):
         for modality in ["video", "state", "language"]:
             new_obs[modality] = {}
             for key in self.policy.modality_configs[modality].modality_keys:
-                if modality == LANGUAGE and key != self.policy.language_key:
+                if (
+                    modality == LANGUAGE
+                    and key != self.policy.modality_configs[LANGUAGE].modality_keys[0]
+                ):
                     continue
                 if modality == "language":
                     # PATCH: Legacy compatibility for DC environments
