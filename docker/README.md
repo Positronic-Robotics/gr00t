@@ -66,6 +66,19 @@ cd /gr00t
 python -c "import gr00t; print('GR00T ready')"
 ```
 
+The included `/gr00t` source supports policy serving and fine-tuning. NVIDIA's simulator
+setup scripts (LIBERO, SimplerEnv, and RoboCasa) require a Git checkout with submodules;
+the image excludes Git metadata. For those scripts, clone the fork inside the container:
+
+```bash
+git clone --recurse-submodules https://github.com/Positronic-Robotics/gr00t.git /workspace/Isaac-GR00T
+cd /workspace/Isaac-GR00T
+export PYTHONPATH="$PWD"
+```
+
+Run the simulator's setup instructions from this checkout. Positronic's RoboLab evaluation
+uses its separate simulator container and does not require these submodules in the policy image.
+
 The image venv is active by default (`/opt/gr00t-venv`; `/workspace/.venv` is a compatibility symlink), and uv is configured with `UV_PROJECT_ENVIRONMENT=/opt/gr00t-venv`. After setting `PYTHONPATH` to the checked-out repo, both `python ...` and `uv run ...` use the global image venv instead of creating a checkout-local `.venv`. If you are working on an existing checkout in the container, run `git pull --ff-only` from that checkout instead of cloning again.
 
 The global venv records the `uv.lock` hash it was built from. If your checked-out repo uses a different lockfile, create a checkout-local venv before running commands. Reusing a uv cache keeps this path from starting cold:

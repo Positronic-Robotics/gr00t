@@ -874,6 +874,8 @@ class Gr00tN1d7Processor(BaseProcessor):
                 "use_mean_std",
                 "use_percentiles",
                 "extra_augmentation_config",
+                "shortest_image_edge",
+                "crop_fraction",
                 "model_name",
                 "model_type",
                 "max_action_horizon",
