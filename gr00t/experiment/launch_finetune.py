@@ -99,7 +99,11 @@ def build_config(ft_config: FinetuneConfig):
         config.model.random_rotation_angle = ft_config.random_rotation_angle
     if ft_config.color_jitter_params is not None:
         config.model.color_jitter_params = ft_config.color_jitter_params
-    config.model.use_percentiles = ft_config.use_percentiles
+    config.model.use_percentiles = (
+        processor_kwargs["use_percentiles"]
+        if ft_config.use_percentiles is None
+        else ft_config.use_percentiles
+    )
     if (ft_config.shortest_image_edge is None) != (ft_config.crop_fraction is None):
         raise ValueError("shortest_image_edge and crop_fraction must be set together")
     if ft_config.shortest_image_edge is not None:

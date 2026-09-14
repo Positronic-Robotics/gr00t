@@ -84,10 +84,11 @@ class FinetuneConfig:
     If None, applying the default color jitter augmentation from the pretrained model.
     """
 
-    use_percentiles: bool = True
+    use_percentiles: bool | None = None
     """
     If True, use q01/q99 percentile statistics for state/action min-max normalization.
     If False, use full min/max statistics.
+    If None, retain the normalization mode saved in the checkpoint processor.
     """
 
     shortest_image_edge: int | None = None
