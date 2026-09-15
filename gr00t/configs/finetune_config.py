@@ -41,9 +41,12 @@ class FinetuneConfig:
 
     modality_config_path: str | None = None
     """
-    Path to a Python file defining the modality configuration for the given embodiment. 
-    If None, use the pre-registered modality config in `gr00t/configs/data/embodiment_configs.py`. 
+    Path to a Python file defining the modality configuration for the given embodiment.
+    If None, retain the modality configuration saved in the base checkpoint.
     """
+
+    video_keys: list[str] | None = None
+    """Explicit camera keys for the fine-tuning dataset; omission retains the checkpoint's cameras."""
 
     # --- Model Tuning Flags ---
     tune_llm: bool = False
@@ -81,10 +84,11 @@ class FinetuneConfig:
     If None, applying the default color jitter augmentation from the pretrained model.
     """
 
-    use_percentiles: bool = True
+    use_percentiles: bool | None = None
     """
     If True, use q01/q99 percentile statistics for state/action min-max normalization.
     If False, use full min/max statistics.
+    If None, retain the normalization mode saved in the checkpoint processor.
     """
 
     shortest_image_edge: int | None = None
