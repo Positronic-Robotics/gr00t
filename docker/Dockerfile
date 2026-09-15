@@ -139,7 +139,7 @@ pip_install_retry() {
 
 pip_install_retry
 
-curl --retry 5 --retry-delay 10 --retry-max-time 300 -LsSf https://astral.sh/uv/0.8.14/install.sh | env UV_INSTALL_DIR=/usr/local/bin sh
+curl --retry 5 --retry-delay 10 --retry-max-time 300 -LsSf https://astral.sh/uv/0.11.14/install.sh | env UV_INSTALL_DIR=/usr/local/bin sh
 INNEREOF
 
 WORKDIR /tmp/gr00t-venv-build
