@@ -194,6 +194,29 @@ The method returns a tuple of:
 - `action`: Dictionary of action arrays
 - `info`: Dictionary of additional information (currently empty, reserved for future use)
 
+### Continuing the Previous Chunk (Real-Time Chunking)
+
+Pass the previous chunk in `options` to make the new chunk continue it:
+
+```python
+action, info = policy.get_action(
+    observation,
+    options={
+        "prev_action": prev_action,  # the previous get_action() result, in robot units
+        "rtc_overlap_steps": 24,  # steps of the previous chunk not yet executed
+        "rtc_frozen_steps": 4,  # steps that execute while this call runs
+        "rtc_ramp_rate": 5.0,
+    },
+)
+```
+
+- The last `rtc_overlap_steps` actions of `prev_action` become the first actions of the new chunk.
+- The first `rtc_frozen_steps` of them stay unchanged. The rest blend into fresh actions. A higher `rtc_ramp_rate` makes the blend faster.
+- The policy shifts `prev_action` so that its last `rtc_overlap_steps` actions start the chunk. Then it normalizes the chunk the same way as a training action chunk. A relative action is re-expressed against the current state.
+- Normalization clips a value outside the training range. A frozen copy of a clipped value differs from the previous action.
+- The action head runs in bfloat16, so a frozen action equals the previous action to about three significant digits.
+- Without `prev_action`, the policy ignores the other options.
+
 ## Querying Modality Configurations
 
 To understand what observations your policy expects and what actions it produces, query the modality configuration:

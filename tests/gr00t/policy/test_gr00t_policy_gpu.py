@@ -171,6 +171,34 @@ class TestGr00tPolicyGPU:
                 "model may have uncontrolled stochasticity beyond the diffusion noise",
             )
 
+    def test_get_action_rtc_keeps_the_frozen_steps(self, policy):
+        """With a previous chunk, the frozen steps repeat its matching actions."""
+        obs = _build_observation(policy, batch_size=1, seed=7)
+        horizon = len(policy.modality_configs["action"].delta_indices)
+        overlap, frozen = horizon // 2, 4
+        # Untrained weights give actions that normalization clips, and the statistics differ
+        # per chunk step. So decode in-range values for the steps where the overlap lands.
+        in_range = np.random.RandomState(0).uniform(
+            -0.9, 0.9, (1, horizon, policy.processor.max_action_dim)
+        )
+        landed = policy.processor.decode_action(in_range, policy.embodiment_tag)
+        prev_chunk = {
+            k: np.roll(v, horizon - overlap, axis=1).astype(np.float32) for k, v in landed.items()
+        }
+        options = {
+            "prev_action": prev_chunk,
+            "rtc_overlap_steps": overlap,
+            "rtc_frozen_steps": frozen,
+            "rtc_ramp_rate": 5.0,
+        }
+        torch.manual_seed(1)
+        chunk, _ = policy.get_action(obs, options)
+        for key, arr in chunk.items():
+            # The action head runs in bfloat16, so a frozen step keeps ~3 significant digits.
+            np.testing.assert_allclose(
+                arr[:, :frozen], landed[key][:, :frozen], rtol=1e-2, atol=1e-2, err_msg=key
+            )
+
     def test_get_action_accepts_different_inputs(self, policy):
         """Different synthetic observations should both complete without numeric failures."""
         for seed in (0, 12345):

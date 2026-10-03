@@ -170,6 +170,81 @@ class TestGr00tPolicyGetAction:
         assert isinstance(info, dict)
 
 
+def _prev_action(batch_size=1, horizon=16):
+    return {
+        k: np.arange(batch_size * horizon, dtype=np.float32).reshape(batch_size, horizon, 1)
+        for k in ACTION_KEYS
+    }
+
+
+def _rtc_options(prev_action, overlap=8, frozen=3, ramp_rate=5.0):
+    return {
+        "prev_action": prev_action,
+        "rtc_overlap_steps": overlap,
+        "rtc_frozen_steps": frozen,
+        "rtc_ramp_rate": ramp_rate,
+    }
+
+
+def _processed_actions(policy):
+    return [c.args[0][0]["content"].actions for c in policy.processor.call_args_list]
+
+
+class TestGr00tPolicyRealTimeChunking:
+    @pytest.mark.parametrize(
+        "options", [None, {"rtc_overlap_steps": 8, "rtc_frozen_steps": 3, "rtc_ramp_rate": 5.0}]
+    )
+    def test_no_previous_chunk_calls_the_model_without_rtc(self, policy, options):
+        policy.get_action(_make_observation(), options)
+
+        assert _processed_actions(policy) == [{}]
+        assert policy.model.get_action.call_args.kwargs["options"] is None
+
+    def test_previous_chunk_is_aligned_before_the_processor_normalizes_it(self, policy):
+        prev_action = _prev_action(batch_size=2)
+
+        policy.get_action(_make_observation(batch_size=2), _rtc_options(prev_action))
+
+        processed = _processed_actions(policy)
+        for i, sample_actions in enumerate(processed):
+            assert set(sample_actions) == set(ACTION_KEYS)
+            for k in ACTION_KEYS:
+                # The unexecuted tail moves to step 0, and its last action fills the chunk.
+                expected = np.concatenate(
+                    [prev_action[k][i, 8:], np.repeat(prev_action[k][i, -1:], 8, 0)]
+                )
+                np.testing.assert_array_equal(sample_actions[k], expected)
+        assert policy.model.get_action.call_args.kwargs["options"] == {
+            "action_horizon": 8,
+            "rtc_overlap_steps": 8,
+            "rtc_frozen_steps": 3,
+            "rtc_ramp_rate": 5.0,
+        }
+
+    @pytest.mark.parametrize(
+        "options",
+        [
+            _rtc_options(_prev_action(), overlap=3, frozen=4),
+            _rtc_options(_prev_action(), overlap=17),
+            _rtc_options(_prev_action(), ramp_rate=0.0),
+            _rtc_options({k: v for k, v in _prev_action().items() if k != "gripper"}),
+            _rtc_options(_prev_action(batch_size=2)),
+            {"prev_action": _prev_action()},
+        ],
+        ids=[
+            "frozen-over-overlap",
+            "overlap-over-horizon",
+            "zero-ramp",
+            "missing-key",
+            "wrong-batch",
+            "no-settings",
+        ],
+    )
+    def test_invalid_rtc_inputs_raise(self, policy, options):
+        with pytest.raises(ValueError):
+            policy.get_action(_make_observation(), options)
+
+
 class _NumpyLanguageSimPolicy:
     def __init__(self):
         self.modality_configs = {

@@ -410,7 +410,7 @@ When direct optimization is insufficient, use one or more of the following:
 
 **Recommended strategy**: `Asynchronous Inference + RTC` is usually the most effective.
 
-> **RTC status (experimental):** Asynchronous inference is supported today. RTC is currently only a low-level model primitive: `action_head.get_action(..., options={"rtc_overlap_steps": ..., "rtc_frozen_steps": ..., "rtc_ramp_rate": ...})` with the previous action fed back in (`gr00t/model/gr00t_n1d7/gr00t_n1d7.py`). It is **not wired into `Gr00tPolicy` or the server-client path** (there `options` is currently unused), and it has no tests or ready-made example — so the RTC steps below require manual integration.
+> **RTC status (experimental):** `Gr00tPolicy.get_action` takes the previous chunk and the RTC settings in `options`. See [Continuing the Previous Chunk](policy.md#continuing-the-previous-chunk-real-time-chunking). No ready-made async loop exists, so the steps below require manual integration.
 
 #### Real-Time Chunking (RTC) Details
 

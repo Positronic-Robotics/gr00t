@@ -35,6 +35,12 @@ from gr00t.data.types import LANGUAGE, VIDEO, MessageType, ModalityConfig, VLASt
 from .policy import BasePolicy, PolicyWrapper
 
 
+PREV_ACTION = "prev_action"
+RTC_OVERLAP_STEPS = "rtc_overlap_steps"
+RTC_FROZEN_STEPS = "rtc_frozen_steps"
+RTC_RAMP_RATE = "rtc_ramp_rate"
+
+
 def _rec_to_dtype(x: Any, dtype: torch.dtype) -> Any:
     """Recursively convert all floating point tensors in a nested structure to the given dtype.
 
@@ -201,11 +207,16 @@ class Gr00tPolicy(BasePolicy):
             unbatched_obs.append(unbatched_value)
         return unbatched_obs
 
-    def _to_vla_step_data(self, observation: dict[str, Any]) -> VLAStepData:
+    def _to_vla_step_data(
+        self, observation: dict[str, Any], prev_action: dict[str, np.ndarray] | None = None
+    ) -> VLAStepData:
         """Convert a single observation into a VLAStepData object for processing.
 
         Args:
             observation: Single observation dict with video, state, and language
+            prev_action: The previous chunk of this sample, in robot units, aligned to
+                the steps of the new chunk. The processor normalizes it the same way as a
+                training action chunk.
 
         Returns:
             VLAStepData object ready for processor input
@@ -213,7 +224,7 @@ class Gr00tPolicy(BasePolicy):
         return VLAStepData(
             images=observation["video"],
             states=observation["state"],
-            actions={},  # No ground truth actions during inference
+            actions=prev_action or {},
             text=observation["language"][self.language_key][0],
             embodiment=self.embodiment_tag,
         )
@@ -401,19 +412,22 @@ class Gr00tPolicy(BasePolicy):
 
         Args:
             observation: Batched observation dictionary
-            options: Optional parameters (currently unused)
+            options: Optional real-time chunking (RTC) inputs. With no
+                ``prev_action``, the call ignores ``options``. With it, the new chunk
+                continues the previous chunk (see ``_rtc_inputs``).
 
         Returns:
             Tuple of (actions_dict, info_dict)
         """
         # Step 1: Split batched observation into individual observations
         unbatched_observations = self._unbatch_observation(observation)
+        prev_actions, rtc_options = self._rtc_inputs(options, len(unbatched_observations))
         processed_inputs = []
 
         # Step 2: Process each observation through the VLA processor
         states = []
-        for obs in unbatched_observations:
-            vla_step_data = self._to_vla_step_data(obs)
+        for i, obs in enumerate(unbatched_observations):
+            vla_step_data = self._to_vla_step_data(obs, prev_actions[i] if prev_actions else None)
             states.append(vla_step_data.states)  # dict[str, np.ndarray[np.float32, (T, D)]]
             messages = [{"type": MessageType.EPISODE_STEP.value, "content": vla_step_data}]
             processed_inputs.append(self.processor(messages))
@@ -424,7 +438,7 @@ class Gr00tPolicy(BasePolicy):
 
         # Step 4: Run model inference to predict actions
         with torch.inference_mode():
-            model_pred = self.model.get_action(**collated_inputs)
+            model_pred = self.model.get_action(**collated_inputs, options=rtc_options)
         normalized_action = model_pred["action_pred"].float()
 
         # Step 5: Decode actions from normalized space back to physical units
@@ -440,6 +454,87 @@ class Gr00tPolicy(BasePolicy):
             key: value.astype(np.float32) for key, value in unnormalized_action.items()
         }
         return casted_action, {}
+
+    def _rtc_inputs(
+        self, options: dict[str, Any] | None, batch_size: int
+    ) -> tuple[list[dict[str, np.ndarray]] | None, dict[str, Any] | None]:
+        """Split the RTC inputs into per-sample previous chunks and action head options.
+
+        ``options[PREV_ACTION]`` is the previous chunk in robot units, in the same
+        format that ``get_action`` returns: ``{action_key: (B, T, D)}``. Its last
+        ``rtc_overlap_steps`` actions become the first actions of the new chunk.
+        The first ``rtc_frozen_steps`` of them stay fixed. The rest blend into
+        fresh actions at ``rtc_ramp_rate``. With relative actions, the previous
+        chunk is re-expressed against the current state.
+
+        Returns ``(None, None)`` when there is no previous chunk.
+        """
+        if not options or options.get(PREV_ACTION) is None:
+            return None, None
+        prev_action = options[PREV_ACTION]
+        action_keys = self.modality_configs["action"].modality_keys
+        if not isinstance(prev_action, dict) or set(prev_action) != set(action_keys):
+            raise ValueError(
+                f"{PREV_ACTION} must be a dict with keys {sorted(action_keys)}; "
+                f"got {sorted(prev_action) if isinstance(prev_action, dict) else type(prev_action)}"
+            )
+        action_norm_params = self.processor.state_action_processor.norm_params[
+            self.embodiment_tag.value
+        ]["action"]
+        horizons = set()
+        for key in action_keys:
+            chunk = prev_action[key]
+            dim = int(action_norm_params[key]["dim"])
+            well_shaped = (
+                isinstance(chunk, np.ndarray)
+                and chunk.ndim == 3
+                and chunk.shape[0] == batch_size
+                and chunk.shape[1] >= 1
+                and chunk.shape[2] == dim
+            )
+            if not well_shaped:
+                raise ValueError(
+                    f"{PREV_ACTION}['{key}'] must be an array of shape ({batch_size}, T, {dim}); "
+                    f"got {getattr(chunk, 'shape', type(chunk))}"
+                )
+            horizons.add(chunk.shape[1])
+        if len(horizons) != 1:
+            raise ValueError(f"All {PREV_ACTION} keys must share one horizon; got {horizons}")
+        horizon = horizons.pop()
+
+        missing = [
+            k for k in (RTC_OVERLAP_STEPS, RTC_FROZEN_STEPS, RTC_RAMP_RATE) if k not in options
+        ]
+        if missing:
+            raise ValueError(f"{PREV_ACTION} needs the options {missing}")
+        overlap = int(options[RTC_OVERLAP_STEPS])
+        frozen = int(options[RTC_FROZEN_STEPS])
+        ramp_rate = float(options[RTC_RAMP_RATE])
+        chunk_len = len(self.modality_configs["action"].delta_indices)
+        if not 0 <= frozen <= overlap <= min(horizon, chunk_len):
+            raise ValueError(
+                f"RTC needs 0 <= {RTC_FROZEN_STEPS} ({frozen}) <= {RTC_OVERLAP_STEPS} ({overlap}) "
+                f"<= previous chunk horizon ({horizon}) and the model chunk length ({chunk_len})"
+            )
+        if ramp_rate <= 0:
+            raise ValueError(f"{RTC_RAMP_RATE} must be positive; got {ramp_rate}")
+
+        # Shift in robot units, before normalization: a relative action's statistics can
+        # differ per chunk step, so a normalized value is valid only at its own step.
+        # The steps past the overlap only fill the chunk; the action head ignores them.
+        aligned = {}
+        for key in action_keys:
+            tail = prev_action[key][:, horizon - overlap :]
+            fill = np.repeat(prev_action[key][:, -1:], chunk_len - overlap, axis=1)
+            aligned[key] = np.concatenate([tail, fill], axis=1).astype(np.float32)
+        prev_actions = [{key: aligned[key][i] for key in action_keys} for i in range(batch_size)]
+        rtc_options = {
+            "action_horizon": overlap,
+            RTC_OVERLAP_STEPS: overlap,
+            RTC_FROZEN_STEPS: frozen,
+            RTC_RAMP_RATE: ramp_rate,
+        }
+        return prev_actions, rtc_options
 
     def check_action(self, action: dict[str, Any]) -> None:
         """Validate that the action has the correct structure and types.

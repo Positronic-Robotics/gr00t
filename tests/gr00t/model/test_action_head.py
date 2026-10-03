@@ -152,6 +152,23 @@ class TestActionHeadGetAction:
         )
         assert out["action_pred"].shape[0] == 1
 
+    def test_rtc_keeps_the_frozen_steps_of_the_previous_chunk(self, action_head):
+        head, config = action_head
+        action_input = _make_action_input(config)
+        prev_chunk = action_input["action"].clone()
+        options = {
+            "action_horizon": config.action_horizon,
+            "rtc_overlap_steps": 3,
+            "rtc_frozen_steps": 2,
+            "rtc_ramp_rate": 5.0,
+        }
+
+        out = head.get_action(_make_backbone_output(config), action_input, options)
+
+        tail = prev_chunk[:, config.action_horizon - 3 :]
+        assert torch.equal(out["action_pred"][:, :2], tail[:, :2])
+        assert not torch.equal(out["action_pred"][:, 2], tail[:, 2])
+
 
 class TestActionHeadEncodeFeatures:
     """Test feature encoding helper."""
