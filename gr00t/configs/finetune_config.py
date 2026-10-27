@@ -91,6 +91,13 @@ class FinetuneConfig:
     If None, retain the normalization mode saved in the checkpoint processor.
     """
 
+    override_pretraining_statistics: bool = True
+    """
+    If True, replace the checkpoint's state/action normalization statistics for the embodiment
+    with statistics computed from the fine-tuning datasets.
+    If False, keep the checkpoint's statistics.
+    """
+
     shortest_image_edge: int | None = None
     """
     Resize images so the shortest edge has this size before fractional cropping.

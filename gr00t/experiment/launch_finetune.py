@@ -143,6 +143,7 @@ def build_config(ft_config: FinetuneConfig):
     config.data.episode_sampling_rate = ft_config.episode_sampling_rate
     config.data.num_shards_per_epoch = ft_config.num_shards_per_epoch
     config.data.ds_weights_alpha = ft_config.ds_weights_alpha
+    config.data.override_pretraining_statistics = ft_config.override_pretraining_statistics
 
     config.training.save_only_model = ft_config.save_only_model
     config.training.resume_from_checkpoint = ft_config.resume_from_checkpoint
